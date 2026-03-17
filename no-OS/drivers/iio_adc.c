@@ -11,17 +11,18 @@
 #include <iio/iio-backend.h>
 #include "adc.h"
 
-struct adc_channel_map {
+struct adc_channel_map
+{
 	const char *id;
 	mxc_adc_chsel_t channel;
 	bool is_temp;
 };
 
 static const struct adc_channel_map channel_map[] = {
-	{ "voltage0", MXC_ADC_CH_0, false },
+	{"voltage0", MXC_ADC_CH_0, false},
 };
 
-#define NUM_CHANNELS	(sizeof(channel_map) / sizeof(channel_map[0]))
+#define NUM_CHANNELS (sizeof(channel_map) / sizeof(channel_map[0]))
 
 static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 {
@@ -64,6 +65,9 @@ static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 	if (ret > 0)
 		ret = 0;
 
+	/* FIFO returns data + status bits; mask to 12-bit ADC result */
+	*value &= 0xFFF;
+
 	MXC_ADC_DisableConversion();
 
 out:
@@ -73,16 +77,40 @@ out:
 	return ret;
 }
 
+static const struct iio_data_format adc_fmt = {
+	.length = 16,
+	.bits = 12,
+	.is_signed = false,
+};
+
+static int iio_adc_read_samples(void *dev, void *data, size_t bytes)
+{
+	size_t num_samples = bytes / sizeof(uint16_t);
+	uint16_t *buffer = (uint16_t *)data;
+	int raw;
+
+	for (size_t i = 0; i < num_samples; i++)
+	{
+		int ret = adc_read_raw(MXC_ADC_CH_0, false, &raw);
+		if (ret)
+			return ret;
+		buffer[i] = raw & 0xFFF;
+	}
+
+	return 0;
+}
+
 static int iio_adc_add_channels(void *dev, struct iio_device *iio_dev)
 {
 	struct iio_channel *ch;
 	unsigned int i;
 
-	for (i = 0; i < NUM_CHANNELS; i++) {
+	for (i = 0; i < NUM_CHANNELS; i++)
+	{
 		ch = iio_device_add_channel(iio_dev, (long)i,
-					    channel_map[i].id,
-					    NULL, NULL,
-					    false, false, NULL);
+									channel_map[i].id,
+									NULL, NULL,
+									false, true, &adc_fmt);
 		if (!ch)
 			return -ENOMEM;
 
@@ -94,9 +122,9 @@ static int iio_adc_add_channels(void *dev, struct iio_device *iio_dev)
 }
 
 static int iio_adc_read_attr(void *dev,
-			     const struct iio_device *iio_dev,
-			     const struct iio_attr *attr,
-			     char *dst, size_t len)
+							 const struct iio_device *iio_dev,
+							 const struct iio_attr *attr,
+							 char *dst, size_t len)
 {
 	const char *attr_name;
 	const char *ch_id;
@@ -121,11 +149,13 @@ static int iio_adc_read_attr(void *dev,
 	if (!ch_id)
 		return -EINVAL;
 
-	for (i = 0; i < NUM_CHANNELS; i++) {
-		if (strcmp(ch_id, channel_map[i].id) == 0) {
+	for (i = 0; i < NUM_CHANNELS; i++)
+	{
+		if (strcmp(ch_id, channel_map[i].id) == 0)
+		{
 			ret = adc_read_raw(channel_map[i].channel,
-					   channel_map[i].is_temp,
-					   &raw_value);
+							   channel_map[i].is_temp,
+							   &raw_value);
 			if (ret)
 				return ret;
 
@@ -160,6 +190,7 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 	info->add_channels = iio_adc_add_channels;
 	info->read_attr = iio_adc_read_attr;
 	info->write_attr = NULL;
+	info->read_samples = iio_adc_read_samples;
 
 	return 0;
 }
