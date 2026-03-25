@@ -127,8 +127,7 @@ int main(void)
 		ret = no_os_lwip_init(&lwip_desc, &lwip_param);
 		if (ret) {
 			pr_err("lwIP init failed: %d\n", ret);
-			no_os_uart_remove(uart_desc);
-			return ret;
+			goto cleanup;
 		}
 
 		ret = iiod_network_run(lwip_desc);

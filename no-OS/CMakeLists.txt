@@ -86,6 +86,7 @@ set(COMMON_INCLUDES
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers
   ${LIBIIO_DIR}/include
   ${LIBIIO_DIR}
+  ${LIBIIO_DIR}/iiod
   ${NOOS_DIR}/include
   ${NOOS_DIR}/network
 )
@@ -108,7 +109,7 @@ set(COMMON_DEFS
   WITH_USB_BACKEND_DYNAMIC=0
   HAVE_DNS_SD=0
   WITH_MODULES=0
-  DEFAULT_LOG_LEVEL=4
+  DEFAULT_LOG_LEVEL=1
   LIBIIO_VERSION_MAJOR=1
   LIBIIO_VERSION_MINOR=0
   LIBIIO_VERSION_GIT="v1.0"
@@ -141,7 +142,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
       set(NO_OS_NETMASK "255.255.255.0")
     endif()
     if(NOT DEFINED NO_OS_GATEWAY)
-      set(NO_OS_GATEWAY "192.0.2.1")
+      set(NO_OS_GATEWAY "192.0.2.2")
     endif()
   endif()
 
@@ -309,6 +310,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     FLASH_SIZE=0x340000
     SRAM_ORIGIN=0x20000000
     SRAM_SIZE=0x100000
+    # 32 KB stack for nested iiod_interpreter calls (network transport)
+    __STACK_SIZE=0x8000
   )
 
   if(WITH_LWIP_NETWORKING)
