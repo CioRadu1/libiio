@@ -24,6 +24,11 @@ static const struct adc_channel_map channel_map[] = {
 
 #define NUM_CHANNELS (sizeof(channel_map) / sizeof(channel_map[0]))
 
+static char scale_values[NUM_CHANNELS][32] = { "1" };
+
+/* Timeout for ADC conversion polling (~10 ms at 100 MHz) */
+#define ADC_POLL_TIMEOUT	1000000
+
 static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 {
 	mxc_adc_slot_req_t slot_req = {
@@ -37,6 +42,7 @@ static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 		.avg_number = MXC_ADC_AVG_1,
 		.num_slots = 1,
 	};
+	volatile uint32_t timeout;
 	int ret;
 
 	if (is_temp)
@@ -56,9 +62,14 @@ static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 	if (ret)
 		goto out;
 
-	/* Wait for sequence to complete - StartConversion is non-blocking */
-	while (!(MXC_ADC_GetFlags() & MXC_F_ADC_INTFL_SEQ_DONE))
-		;
+	/* Wait for sequence to complete with timeout */
+	timeout = ADC_POLL_TIMEOUT;
+	while (!(MXC_ADC_GetFlags() & MXC_F_ADC_INTFL_SEQ_DONE)) {
+		if (--timeout == 0) {
+			ret = -ETIMEDOUT;
+			goto out_disable;
+		}
+	}
 
 	/* GetData returns number of FIFO entries read (1 = success) */
 	ret = MXC_ADC_GetData(value);
@@ -68,6 +79,7 @@ static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 	/* FIFO returns data + status bits; mask to 12-bit ADC result */
 	*value &= 0xFFF;
 
+out_disable:
 	MXC_ADC_DisableConversion();
 
 out:
@@ -139,28 +151,69 @@ static int iio_adc_read_attr(void *dev,
 	if (!attr_name)
 		return -EINVAL;
 
-	if (strcmp(attr_name, "scale") == 0)
-		return snprintf(dst, len, "1") + 1;
+	ch_id = iio_channel_get_id(attr->iio.chn);
+	if (!ch_id)
+		return -EINVAL;
 
-	if (strcmp(attr_name, "raw") != 0)
+	for (i = 0; i < NUM_CHANNELS; i++) {
+		if (strcmp(ch_id, channel_map[i].id) != 0)
+			continue;
+
+		if (strcmp(attr_name, "scale") == 0)
+			return snprintf(dst, len, "%s", scale_values[i]) + 1;
+
+		if (strcmp(attr_name, "raw") == 0) {
+			ret = adc_read_raw(channel_map[i].channel,
+					   channel_map[i].is_temp,
+					   &raw_value);
+			if (ret)
+				return ret;
+
+			return snprintf(dst, len, "%d", raw_value) + 1;
+		}
+
+		return -EINVAL;
+	}
+
+	return -EINVAL;
+}
+
+static int iio_adc_write_attr(void *dev,
+			      const struct iio_device *iio_dev,
+			      const struct iio_attr *attr,
+			      const char *src, size_t len)
+{
+	const char *attr_name;
+	const char *ch_id;
+	unsigned int i;
+
+	if (attr->type != IIO_ATTR_TYPE_CHANNEL || !attr->iio.chn)
+		return -EINVAL;
+
+	attr_name = iio_attr_get_name(attr);
+	if (!attr_name)
 		return -EINVAL;
 
 	ch_id = iio_channel_get_id(attr->iio.chn);
 	if (!ch_id)
 		return -EINVAL;
 
-	for (i = 0; i < NUM_CHANNELS; i++)
-	{
-		if (strcmp(ch_id, channel_map[i].id) == 0)
-		{
-			ret = adc_read_raw(channel_map[i].channel,
-							   channel_map[i].is_temp,
-							   &raw_value);
-			if (ret)
-				return ret;
+	for (i = 0; i < NUM_CHANNELS; i++) {
+		if (strcmp(ch_id, channel_map[i].id) != 0)
+			continue;
 
-			return snprintf(dst, len, "%d", raw_value) + 1;
+		if (strcmp(attr_name, "scale") == 0) {
+			if (len >= sizeof(scale_values[i]))
+				return -EINVAL;
+			memcpy(scale_values[i], src, len);
+			scale_values[i][len] = '\0';
+			return len;
 		}
+
+		if (strcmp(attr_name, "raw") == 0)
+			return -EPERM;
+
+		return -EINVAL;
 	}
 
 	return -EINVAL;
@@ -189,7 +242,7 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 	info->dev = NULL;
 	info->add_channels = iio_adc_add_channels;
 	info->read_attr = iio_adc_read_attr;
-	info->write_attr = NULL;
+	info->write_attr = iio_adc_write_attr;
 	info->read_samples = iio_adc_read_samples;
 
 	return 0;

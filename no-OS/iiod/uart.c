@@ -10,6 +10,8 @@
 #include <no_os_print_log.h>
 #include <tinyiiod/tinyiiod.h>
 
+static const char binary_hdr[] = "BINARY\r\n";
+
 static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	struct no_os_uart_desc *uart = (struct no_os_uart_desc *)pdata;
@@ -35,6 +37,42 @@ static ssize_t iiod_uart_write(struct iiod_pdata *pdata, const void *buf,
 	return (ssize_t)size;
 }
 
+/*
+ * Wait for the "BINARY\r\n" handshake from the host, reading one byte at a
+ * time.  This recovers framing after a CDC ACM disconnect leaves stray bytes
+ * in the UART RX path — since commands are 8-byte aligned, even a single
+ * garbage byte would permanently misalign the reader worker's 8-byte reads.
+ *
+ * Once the full pattern is matched, send "0\r\n" back to complete the
+ * handshake so the host can proceed with the binary protocol.
+ */
+static int iiod_uart_wait_for_handshake(struct no_os_uart_desc *uart_desc)
+{
+	static const uint8_t ok_resp[] = "0\r\n";
+	uint8_t byte;
+	int pos = 0;
+	int32_t ret;
+
+	while (pos < 8) {
+		ret = no_os_uart_read(uart_desc, &byte, 1);
+		if (ret < 0)
+			return ret;
+
+		if (byte == (uint8_t)binary_hdr[pos]) {
+			pos++;
+		} else if (byte == (uint8_t)binary_hdr[0]) {
+			pos = 1;
+		} else {
+			pos = 0;
+		}
+	}
+
+	ret = no_os_uart_write(uart_desc, ok_resp, sizeof(ok_resp) - 1);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
 
 int iiod_uart_run(struct no_os_uart_desc *uart_desc)
 {
@@ -67,11 +105,15 @@ int iiod_uart_run(struct no_os_uart_desc *uart_desc)
 
 	xml_len = strlen(xml) + 1;
 
-	pr_info("IIOD: starting interpreter (xml %zu bytes)\n", xml_len);
+	while (1) {
+		ret = iiod_uart_wait_for_handshake(uart_desc);
+		if (ret < 0)
+			continue;
 
-	ret = iiod_interpreter(ctx, (struct iiod_pdata *)uart_desc,
-			       iiod_uart_read, iiod_uart_write,
-			       xml, xml_len);
+		ret = iiod_interpreter(ctx, (struct iiod_pdata *)uart_desc,
+				       iiod_uart_read, iiod_uart_write,
+				       xml, xml_len);
+	}
 
 	iio_context_destroy(ctx);
 	iiod_cleanup();
