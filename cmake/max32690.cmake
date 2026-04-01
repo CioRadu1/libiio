@@ -18,9 +18,12 @@ set(CMAKE_OBJCOPY      ${TOOLCHAIN_BIN}/arm-none-eabi-objcopy CACHE FILEPATH "ob
 set(CMAKE_SIZE         ${TOOLCHAIN_BIN}/arm-none-eabi-size CACHE FILEPATH "size")
 
 set(CPU_FLAGS "-mcpu=cortex-m4 -mthumb -mfloat-abi=softfp -mfpu=fpv4-sp-d16")
-set(CMAKE_C_FLAGS_INIT   "${CPU_FLAGS} -Os -ffunction-sections -fdata-sections -Wall")
+set(CMAKE_C_FLAGS_INIT   "${CPU_FLAGS} -ffunction-sections -fdata-sections -Wall")
 set(CMAKE_ASM_FLAGS_INIT "${CPU_FLAGS} -x assembler-with-cpp")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "${CPU_FLAGS} -Wl,--gc-sections --specs=nosys.specs")
+
+set(CMAKE_C_FLAGS_DEBUG   "-Og -g3" CACHE STRING "")
+set(CMAKE_C_FLAGS_RELEASE "-Os"     CACHE STRING "")
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

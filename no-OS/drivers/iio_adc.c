@@ -71,6 +71,9 @@ static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
 		}
 	}
 
+	/* Clear the sequence-done flag before reading to prevent stale state */
+	MXC_ADC_ClearFlags(MXC_F_ADC_INTFL_SEQ_DONE);
+
 	/* GetData returns number of FIFO entries read (1 = success) */
 	ret = MXC_ADC_GetData(value);
 	if (ret > 0)

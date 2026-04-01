@@ -109,7 +109,7 @@ set(COMMON_DEFS
   WITH_USB_BACKEND_DYNAMIC=0
   HAVE_DNS_SD=0
   WITH_MODULES=0
-  DEFAULT_LOG_LEVEL=1
+  DEFAULT_LOG_LEVEL=0
   LIBIIO_VERSION_MAJOR=1
   LIBIIO_VERSION_MINOR=0
   LIBIIO_VERSION_GIT="v1.0"
@@ -325,7 +325,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     )
   endif()
 
-  target_compile_options(libiio-noos PRIVATE -Wall)
+  target_compile_options(libiio-noos PRIVATE -Wall -Og -g)
 
   # --- Linker settings ---
   set(LINKER_SCRIPT ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/GCC/max32690.ld)
