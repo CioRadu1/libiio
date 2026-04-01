@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <no_os_uart.h>
 #include <no_os_print_log.h>
+#include <no_os_delay.h>
 #include <tinyiiod/tinyiiod.h>
 
 static const char binary_hdr[] = "BINARY\r\n";
@@ -15,11 +16,20 @@ static const char binary_hdr[] = "BINARY\r\n";
 static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	struct no_os_uart_desc *uart = (struct no_os_uart_desc *)pdata;
+	uint32_t total = 0;
 	int32_t ret;
 
-	ret = no_os_uart_read(uart, (uint8_t *)buf, (uint32_t)size);
-	if (ret < 0)
-		return ret;
+	while (total < size) {
+		ret = no_os_uart_read(uart, (uint8_t *)buf + total,
+				      (uint32_t)(size - total));
+		if (ret < 0) {
+			if (ret == -EAGAIN)
+				continue;
+			return ret;
+		}
+
+		total += ret;
+	}
 
 	return (ssize_t)size;
 }
@@ -55,8 +65,11 @@ static int iiod_uart_wait_for_handshake(struct no_os_uart_desc *uart_desc)
 
 	while (pos < 8) {
 		ret = no_os_uart_read(uart_desc, &byte, 1);
-		if (ret < 0)
+		if (ret < 0) {
+			if (ret == -EAGAIN)
+				continue;
 			return ret;
+		}
 
 		if (byte == (uint8_t)binary_hdr[pos]) {
 			pos++;

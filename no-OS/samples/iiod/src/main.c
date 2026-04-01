@@ -45,6 +45,7 @@ int main(void)
 		.size = NO_OS_UART_CS_8,
 		.parity = NO_OS_UART_PAR_NO,
 		.stop = NO_OS_UART_STOP_1_BIT,
+		.asynchronous_rx = true,
 #ifdef MAX32690
 		.platform_ops = &max_uart_ops,
 		.extra = &uart_extra,
