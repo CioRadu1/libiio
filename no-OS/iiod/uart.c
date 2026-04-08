@@ -47,15 +47,6 @@ static ssize_t iiod_uart_write(struct iiod_pdata *pdata, const void *buf,
 	return (ssize_t)size;
 }
 
-/*
- * Wait for the "BINARY\r\n" handshake from the host, reading one byte at a
- * time.  This recovers framing after a CDC ACM disconnect leaves stray bytes
- * in the UART RX path — since commands are 8-byte aligned, even a single
- * garbage byte would permanently misalign the reader worker's 8-byte reads.
- *
- * Once the full pattern is matched, send "0\r\n" back to complete the
- * handshake so the host can proceed with the binary protocol.
- */
 static int iiod_uart_wait_for_handshake(struct no_os_uart_desc *uart_desc)
 {
 	static const uint8_t ok_resp[] = "0\r\n";
