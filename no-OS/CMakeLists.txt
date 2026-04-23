@@ -91,6 +91,7 @@ set(APP_SRCS
 set(COMMON_INCLUDES
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers
+  ${CMAKE_CURRENT_SOURCE_DIR}/iiod
   ${LIBIIO_DIR}/include
   ${LIBIIO_DIR}
   ${LIBIIO_DIR}/iiod
@@ -115,6 +116,8 @@ set(COMMON_DEFS
   WITH_SERIAL_BACKEND_DYNAMIC=0
   WITH_USB_BACKEND_DYNAMIC=0
   HAVE_DNS_SD=0
+  WITH_EMU_BACKEND=0
+  WITH_EMU_BACKEND_DYNAMIC=0
   WITH_MODULES=0
   DEFAULT_LOG_LEVEL=0
   LIBIIO_VERSION_MAJOR=1
@@ -154,6 +157,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
   set(MSDK_PERIPH  ${MSDK_DIR}/Libraries/PeriphDrivers)
   set(MSDK_CMSIS   ${MSDK_DIR}/Libraries/CMSIS)
   set(PLATFORM_DIR ${NOOS_DIR}/drivers/platform/maxim/max32690)
+  set(PLATFORM maxim)
 
   if(WITH_LWIP_NETWORKING)
     set(LWIP_DIR ${NOOS_DIR}/libraries/lwip/lwip)
@@ -286,6 +290,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 
   target_include_directories(libiio-noos PRIVATE
     ${COMMON_INCLUDES}
+
+    # Platform parameters (parameters.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/src/platform/${PLATFORM}
 
     # MSDK CMSIS & peripheral headers
     ${MSDK_CMSIS}/Device/Maxim/MAX32690/Include
