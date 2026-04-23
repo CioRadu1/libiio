@@ -20,7 +20,9 @@
 
 #define IIO_USB_EP_IN		1
 #define IIO_USB_EP_OUT		2
-#define IIO_USB_NUM_PIPES	1
+#define IIO_USB_EP1_IN		3
+#define IIO_USB_EP1_OUT		4
+#define IIO_USB_NUM_PIPES	2
 
 #define IIO_USD_CMD_RESET_PIPES	 0
 #define IIO_USD_CMD_OPEN_PIPE	 1
@@ -37,30 +39,38 @@ dev_qual_desc = {
 	0x0A, 0x06, 0x0200, 0x02, 0x00, 0x00, 0x40, 0x01, 0x00,
 };
 
-/* Full-speed config: 2 bulk endpoints, 64-byte packets */
+/* Full-speed config: 4 bulk endpoints (2 pipes), 64-byte packets */
 static __attribute__((aligned(4))) struct __attribute__((packed)) {
 	MXC_USB_configuration_descriptor_t	config;
 	MXC_USB_interface_descriptor_t		iface;
 	MXC_USB_endpoint_descriptor_t		ep_in;
 	MXC_USB_endpoint_descriptor_t		ep_out;
+	MXC_USB_endpoint_descriptor_t		ep1_in;
+	MXC_USB_endpoint_descriptor_t		ep1_out;
 } cfg_desc = {
-	{ 0x09, 0x02, 0x0020, 0x01, 0x01, 0x00, 0x80, 0xFA },
-	{ 0x09, 0x04, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x04 },
+	{ 0x09, 0x02, 0x002E, 0x01, 0x01, 0x00, 0x80, 0xFA },
+	{ 0x09, 0x04, 0x00, 0x00, 0x04, 0x02, 0x00, 0x00, 0x04 },
 	{ 0x07, 0x05, 0x81, 0x02, 0x0040, 0x00 },
 	{ 0x07, 0x05, 0x02, 0x02, 0x0040, 0x00 },
+	{ 0x07, 0x05, 0x83, 0x02, 0x0040, 0x00 },
+	{ 0x07, 0x05, 0x04, 0x02, 0x0040, 0x00 },
 };
 
-/* High-speed config: 2 bulk endpoints, 512-byte packets */
+/* High-speed config: 4 bulk endpoints (2 pipes), 512-byte packets */
 static __attribute__((aligned(4))) struct __attribute__((packed)) {
 	MXC_USB_configuration_descriptor_t	config;
 	MXC_USB_interface_descriptor_t		iface;
 	MXC_USB_endpoint_descriptor_t		ep_in;
 	MXC_USB_endpoint_descriptor_t		ep_out;
+	MXC_USB_endpoint_descriptor_t		ep1_in;
+	MXC_USB_endpoint_descriptor_t		ep1_out;
 } cfg_desc_hs = {
-	{ 0x09, 0x02, 0x0020, 0x01, 0x01, 0x00, 0x80, 0xFA },
-	{ 0x09, 0x04, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x04 },
+	{ 0x09, 0x02, 0x002E, 0x01, 0x01, 0x00, 0x80, 0xFA },
+	{ 0x09, 0x04, 0x00, 0x00, 0x04, 0x02, 0x00, 0x00, 0x04 },
 	{ 0x07, 0x05, 0x81, 0x02, 0x0200, 0x00 },
 	{ 0x07, 0x05, 0x02, 0x02, 0x0200, 0x00 },
+	{ 0x07, 0x05, 0x83, 0x02, 0x0200, 0x00 },
+	{ 0x07, 0x05, 0x04, 0x02, 0x0200, 0x00 },
 };
 
 /* String descriptors (UTF-16LE) */
@@ -95,7 +105,9 @@ static volatile int configured;
 static volatile int suspended;
 static volatile unsigned int event_flags;
 static volatile int pipe_active;
-
+static volatile int pipe1_opened;
+static volatile int active_ep_in = IIO_USB_EP_IN;
+static volatile int active_ep_out = IIO_USB_EP_OUT;
 static volatile int read_complete;
 static volatile int read_error;
 static volatile int write_complete;
@@ -152,6 +164,14 @@ static void usb_cancel_pending(void)
 	r = MXC_USB_GetRequest(IIO_USB_EP_IN);
 	if (r)
 		MXC_USB_RemoveRequest(r);
+
+	r = MXC_USB_GetRequest(IIO_USB_EP1_OUT);
+	if (r)
+		MXC_USB_RemoveRequest(r);
+
+	r = MXC_USB_GetRequest(IIO_USB_EP1_IN);
+	if (r)
+		MXC_USB_RemoveRequest(r);
 }
 
 static int usb_event_cb(maxusb_event_t evt, void *data)
@@ -166,6 +186,9 @@ static int usb_event_cb(maxusb_event_t evt, void *data)
 		MXC_USB_Disconnect();
 		configured = 0;
 		pipe_active = 0;
+		pipe1_opened = 0;
+		active_ep_in = IIO_USB_EP_IN;
+		active_ep_out = IIO_USB_EP_OUT;
 		usb_cancel_pending();
 		enum_clearconfig();
 		break;
@@ -184,6 +207,9 @@ static int usb_event_cb(maxusb_event_t evt, void *data)
 		enum_clearconfig();
 		configured = 0;
 		pipe_active = 0;
+		pipe1_opened = 0;
+		active_ep_in = IIO_USB_EP_IN;
+		active_ep_out = IIO_USB_EP_OUT;
 		usb_cancel_pending();
 		suspended = 0;
 		break;
@@ -230,12 +256,17 @@ static int usb_setconfig_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 
 		MXC_USB_ConfigEp(IIO_USB_EP_IN, MAXUSB_EP_TYPE_IN, in_pkt);
 		MXC_USB_ConfigEp(IIO_USB_EP_OUT, MAXUSB_EP_TYPE_OUT, out_pkt);
+		MXC_USB_ConfigEp(IIO_USB_EP1_IN, MAXUSB_EP_TYPE_IN, in_pkt);
+		MXC_USB_ConfigEp(IIO_USB_EP1_OUT, MAXUSB_EP_TYPE_OUT, out_pkt);
 
 		configured = 1;
 		return 0;
 	} else if (sud->wValue == 0) {
 		configured = 0;
 		pipe_active = 0;
+		pipe1_opened = 0;
+		active_ep_in = IIO_USB_EP_IN;
+		active_ep_out = IIO_USB_EP_OUT;
 		usb_cancel_pending();
 		return 0;
 	}
@@ -264,20 +295,49 @@ static int usb_vendor_req_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 	switch (sud->bRequest) {
 	case IIO_USD_CMD_RESET_PIPES:
 		pipe_active = 0;
+		pipe1_opened = 0;
+		active_ep_in = IIO_USB_EP_IN;
+		active_ep_out = IIO_USB_EP_OUT;
 		usb_cancel_pending();
 		return 0;
 
 	case IIO_USD_CMD_OPEN_PIPE:
 		if (sud->wValue >= IIO_USB_NUM_PIPES)
 			return -1;
-		pipe_active = 1;
+		if (sud->wValue == 0) {
+			pipe_active = 1;
+		} else {
+			MXC_USB_Req_t *r;
+
+			r = MXC_USB_GetRequest(IIO_USB_EP_OUT);
+			if (r)
+				MXC_USB_RemoveRequest(r);
+
+			pipe1_opened = 1;
+			read_complete = 1;
+		}
 		return 0;
 
 	case IIO_USD_CMD_CLOSE_PIPE:
 		if (sud->wValue >= IIO_USB_NUM_PIPES)
 			return -1;
-		pipe_active = 0;
-		usb_cancel_pending();
+		if (sud->wValue == 0) {
+			pipe_active = 0;
+			usb_cancel_pending();
+		} else {
+			MXC_USB_Req_t *r;
+
+			pipe1_opened = 0;
+
+			r = MXC_USB_GetRequest(IIO_USB_EP1_OUT);
+			if (r)
+				MXC_USB_RemoveRequest(r);
+			r = MXC_USB_GetRequest(IIO_USB_EP1_IN);
+			if (r)
+				MXC_USB_RemoveRequest(r);
+
+			read_complete = 1;
+		}
 		return 0;
 
 	default:
@@ -295,7 +355,7 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 		MXC_USB_Req_t req = {0};
 		int ret;
 
-		req.ep = IIO_USB_EP_OUT;
+		req.ep = active_ep_out;
 		req.data = (uint8_t *)buf + total;
 		req.reqlen = size - total;
 		req.callback = usb_read_cb;
@@ -316,10 +376,11 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 
 		if (!configured || !pipe_active)
 			return -ENODEV;
-		if (read_error)
-			return -EIO;
-		if (req.actlen == 0)
-			return -ENODEV;
+		if (read_error || req.actlen == 0) {
+			if (pipe1_opened)
+				return -EPIPE;
+			return read_error ? -EIO : -ENODEV;
+		}
 
 		total += req.actlen;
 	}
@@ -338,7 +399,7 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 		MXC_USB_Req_t req = {0};
 		int ret;
 
-		req.ep = IIO_USB_EP_IN;
+		req.ep = active_ep_in;
 		req.data = (uint8_t *)buf + total;
 		req.reqlen = size - total;
 		req.callback = usb_write_cb;
@@ -462,9 +523,6 @@ int iiod_usb_run(void)
 
 	pr_info("USB initialized, waiting for host...\n");
 
-	while (!configured)
-		;
-
 	ret = iiod_init();
 	if (ret < 0) {
 		pr_err("iiod_init failed: %d\n", ret);
@@ -491,7 +549,10 @@ int iiod_usb_run(void)
 	pr_info("IIO context ready (%u bytes XML)\n", (unsigned int)xml_len);
 
 	while (1) {
-		while (!pipe_active || !configured)
+		while (!configured)
+			;
+
+		while (!pipe_active)
 			;
 
 		ret = iiod_usb_wait_for_handshake();
@@ -506,6 +567,31 @@ int iiod_usb_run(void)
 				       (struct iiod_pdata *)&usb_pdata,
 				       iiod_usb_read, iiod_usb_write,
 				       xml, xml_len);
+
+		if (pipe1_opened) {
+			pr_info("Pipe 1 opened, switching to buffer mode\n");
+
+			active_ep_in = IIO_USB_EP1_IN;
+			active_ep_out = IIO_USB_EP1_OUT;
+
+			ret = iiod_usb_wait_for_handshake();
+			if (ret == 0) {
+				ret = iiod_interpreter(ctx,
+					(struct iiod_pdata *)&usb_pdata,
+					iiod_usb_read, iiod_usb_write,
+					xml, xml_len);
+			}
+
+			pr_info("Pipe 1 session ended: %d\n", ret);
+		}
+
+		NVIC_DisableIRQ(USB_IRQn);
+		usb_cancel_pending();
+		active_ep_in = IIO_USB_EP_IN;
+		active_ep_out = IIO_USB_EP_OUT;
+		pipe1_opened = 0;
+		pipe_active = 0;
+		NVIC_EnableIRQ(USB_IRQn);
 
 		pr_info("USB IIO session ended: %d\n", ret);
 	}
