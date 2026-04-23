@@ -24,6 +24,8 @@
 #define IIO_USB_EP1_OUT		4
 #define IIO_USB_NUM_PIPES	2
 
+#define USB_IO_TIMEOUT_MS	100
+
 #define IIO_USD_CMD_RESET_PIPES	 0
 #define IIO_USD_CMD_OPEN_PIPE	 1
 #define IIO_USD_CMD_CLOSE_PIPE	 2
@@ -345,6 +347,13 @@ static int usb_vendor_req_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 	}
 }
 
+static void usb_remove_request_safe(MXC_USB_Req_t *req)
+{
+	NVIC_DisableIRQ(USB_IRQn);
+	MXC_USB_RemoveRequest(req);
+	NVIC_EnableIRQ(USB_IRQn);
+}
+
 static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	uint32_t total = 0;
@@ -353,6 +362,7 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 
 	while (total < size) {
 		MXC_USB_Req_t req = {0};
+		struct no_os_time start, now;
 		int ret;
 
 		req.ep = active_ep_out;
@@ -369,9 +379,20 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 		if (ret)
 			return -EIO;
 
+		start = no_os_get_time();
+
 		while (!read_complete) {
-			if (!configured || !pipe_active)
+			if (!configured || !pipe_active) {
+				usb_remove_request_safe(&req);
 				return -ENODEV;
+			}
+
+			now = no_os_get_time();
+			if ((now.s - start.s) * 1000 +
+			    (int)(now.us - start.us) / 1000 >= USB_IO_TIMEOUT_MS) {
+				usb_remove_request_safe(&req);
+				return -ETIMEDOUT;
+			}
 		}
 
 		if (!configured || !pipe_active)
@@ -397,6 +418,7 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 
 	while (total < size) {
 		MXC_USB_Req_t req = {0};
+		struct no_os_time start, now;
 		int ret;
 
 		req.ep = active_ep_in;
@@ -413,9 +435,20 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 		if (ret)
 			return -EIO;
 
+		start = no_os_get_time();
+
 		while (!write_complete) {
-			if (!configured || !pipe_active)
+			if (!configured || !pipe_active) {
+				usb_remove_request_safe(&req);
 				return -ENODEV;
+			}
+
+			now = no_os_get_time();
+			if ((now.s - start.s) * 1000 +
+			    (int)(now.us - start.us) / 1000 >= USB_IO_TIMEOUT_MS) {
+				usb_remove_request_safe(&req);
+				return -ETIMEDOUT;
+			}
 		}
 
 		if (!configured || !pipe_active)
@@ -583,6 +616,18 @@ int iiod_usb_run(void)
 			}
 
 			pr_info("Pipe 1 session ended: %d\n", ret);
+		}
+
+		/*
+		 * Send dummy data on bulk IN to unblock host's reader
+		 * thread, which may be stuck on a pending USB read that
+		 * libusb_cancel_transfer cannot cancel through USB/IP.
+		 */
+		if (configured && pipe_active) {
+			uint8_t dummy[8] = {0};
+
+			iiod_usb_write((struct iiod_pdata *)&usb_pdata,
+				       dummy, sizeof(dummy));
 		}
 
 		NVIC_DisableIRQ(USB_IRQn);
