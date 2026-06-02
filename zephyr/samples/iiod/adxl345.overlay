@@ -56,6 +56,14 @@
 				>;
 				buffer-name = "buffer0";
 				io-name = "adxl345";
+				trigger-device = <&trigger1>;
+			};
+
+			trigger1: adxl345@1 {
+				compatible = "iio,trigger-zephyr-common";
+				reg = <1>;
+				trigger-id = "trigger1";
+				trigger-type = "zephyr-common";
 			};
 		};
 	};
