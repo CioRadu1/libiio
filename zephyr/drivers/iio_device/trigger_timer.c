@@ -289,7 +289,7 @@ static const struct iio_device_trigger_config iio_device_trigger_timer_config_##
 	.ops = &iio_trigger_timer_ops, \
 };											\
 												\
-IIO_DEVICE_DT_INST_DEFINE(inst, DT_INST_PROP_OR(inst, io_name, NULL),				\
+IIO_DEVICE_DT_INST_DEFINE(inst,									\
 	iio_device_trigger_timer_driver_init, NULL,							\
 	&iio_device_trigger_timer_data_##inst, &iio_device_trigger_timer_config_##inst,		\
 	POST_KERNEL, CONFIG_LIBIIO_IIO_DEVICE_TRIGGER_INIT_PRIORITY,				\
