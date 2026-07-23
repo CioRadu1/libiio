@@ -818,19 +818,22 @@ static void iiod_usb_thread(void *p1, void *p2, void *p3)
     }
     LOG_INF("Initialized USB device");
 
-    err = usbd_enable(usbd_thread);
-    if (err) {
-        LOG_ERR("Failed to enable device support");
-        return;
-    }
-    LOG_INF("Enabled  USB device");
-
+    /* The message callback must be registered before usbd_enable();
+     * registering afterwards fails on this Zephyr version and would
+     * abort the thread before iiod_interpreter ever starts. */
     err = usbd_msg_register_cb(usbd_thread, msg_cb);
     if (err) {
         LOG_ERR("Failed to register message callback");
         return;
     }
     LOG_INF("Callback registered");
+
+    err = usbd_enable(usbd_thread);
+    if (err) {
+        LOG_ERR("Failed to enable device support");
+        return;
+    }
+    LOG_INF("Enabled  USB device");
 
 	LOG_INF("Initializing tinyiiod resources...");
 	if (iiod_init() < 0) {
