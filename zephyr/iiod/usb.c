@@ -460,13 +460,12 @@ static int iio_usb_init(struct usbd_class_data *const c_data)
     return 0;
 }
 
-static int iio_usb_control_to_host(struct usbd_class_data *c_data,
-                                    const struct usb_setup_packet *const setup,
-                                    struct net_buf *const buf)
+static struct net_buf *iio_usb_control_to_host(struct usbd_class_data *c_data,
+                                    const struct usb_setup_packet *const setup)
 {
     LOG_DBG("Control to host: bRequest=0x%02x, wValue=0x%04x, wIndex=0x%04x, wLength=%u",
             setup->bRequest, setup->wValue, setup->wIndex, setup->wLength);
-    return 0;
+    return NULL;
 }
 
 /*
