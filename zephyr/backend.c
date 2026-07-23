@@ -86,6 +86,7 @@ zephyr_create_context(const struct iio_context_params *params, const char *args)
 	char id[32];
 	int i = 0;
 	int ret;
+	unsigned int nb_channels;
 
 	const char *description = "Zephyr " BACKEND_VERSION(BACKEND_VERSION_BUILD);
 
@@ -120,6 +121,21 @@ zephyr_create_context(const struct iio_context_params *params, const char *args)
 		buffer = iio_device_add_buffer(iio_device, 0);
 		const char *buffer_name = iio_device_get_buffer_name(dev);
 		iio_buffer_add_attr(buffer, buffer_name);
+
+		/*
+		 * Upstream commit d3e54d9e moved scan-element ownership from
+		 * channels to buffers: buffers must now be told explicitly which
+		 * channels are scan elements. Zephyr has no sysfs enable path, so
+		 * pass NULL for en_path (mirrors the no-OS backend).
+		 */
+		nb_channels = iio_device_get_channels_count(iio_device);
+		for (unsigned int ch = 0; ch < nb_channels; ch++) {
+			struct iio_channel *chn = iio_device_get_channel(iio_device, ch);
+
+			if (chn && iio_channel_is_scan_element(chn)) {
+				iio_buffer_add_scan_element(buffer, chn, NULL);
+			}
+		}
 
 		i++;
 
