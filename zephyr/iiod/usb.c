@@ -398,8 +398,10 @@ static int iio_usb_request_handler(struct usbd_class_data *const c_data,
 
         net_buf_unref(buf);
 
-        /* Re-queue another receive buffer */
-        iio_usb_queue_rx_pipe(c_data, pipe);
+        /* Re-queue only for a healthy, open pipe (not while closing) */
+        if (err == 0 && pipe->open) {
+            iio_usb_queue_rx_pipe(c_data, pipe);
+        }
 
     } else if (ep == pipe->ep_in) {
         /* Sent data to host (TX) */
@@ -661,9 +663,17 @@ static int iio_usb_control_to_dev(struct usbd_class_data *c_data,
             return -EINVAL;
         }
         if (data->pipes[pipe_id].open) {
+            struct iio_usb_pipe *pipe = &data->pipes[pipe_id];
+
             data->pipes[pipe_id].open = false;
             data->pipes[pipe_id].rx_err = -ESHUTDOWN;
             k_sem_give(&data->pipes[pipe_id].rx_sem);
+
+            /* Flush in-flight transfers so net_bufs return to the pool */
+            usbd_ep_dequeue(usbd_class_get_ctx(c_data),
+                            pipe_get_bulk_out(pipe));
+            usbd_ep_dequeue(usbd_class_get_ctx(c_data),
+                            pipe_get_bulk_in(pipe));
         }
         break;
 
