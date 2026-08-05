@@ -385,11 +385,13 @@ static int zephyr_enqueue_block(struct iio_block_pdata *pdata, size_t bytes_used
 	sys_slist_append(&buf->pending_blocks, &pdata->node);
 	k_mutex_unlock(&buf->lock);
 
+#ifdef CONFIG_DT_HAS_IIO_TRIGGER_TIMER_ENABLED
 	if (buf->trig) {
 		extern struct k_work_q trigger_wq;
 
 		k_work_submit_to_queue(&trigger_wq, (struct k_work *)buf->trig);
 	}
+#endif
 
 	return 0;
 }
