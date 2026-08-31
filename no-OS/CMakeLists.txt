@@ -158,7 +158,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
   set(BOARD max32690 CACHE STRING "Target board")
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boards/${BOARD}.cmake)
 
-  set(ADC ${BOARD} CACHE STRING "ADC device HAL (defaults to the board's internal ADC)")
+  set(ADC common_api CACHE STRING "ADC device HAL (defaults to the board's internal ADC)")
   set(BOARD_ADC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/adc/${ADC}.cmake)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/adc/${ADC}.cmake)

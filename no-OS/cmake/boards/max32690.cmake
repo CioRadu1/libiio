@@ -9,10 +9,6 @@ set(MSDK_PERIPH  ${MSDK_DIR}/Libraries/PeriphDrivers)
 set(MSDK_CMSIS   ${MSDK_DIR}/Libraries/CMSIS)
 set(PLATFORM_DIR ${NOOS_DIR}/drivers/platform/maxim/max32690)
 
-set(BOARD_ADC_SRC
-  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${BOARD}/${BOARD}.c
-)
-
 set(BOARD_STARTUP_SRCS
   ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/GCC/startup_max32690.S
   ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/system_max32690.c
