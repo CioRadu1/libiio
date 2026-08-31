@@ -10,6 +10,9 @@
 #include <no_os_print_log.h>
 #include <no_os_delay.h>
 #include <tinyiiod/tinyiiod.h>
+#include "parameters.h"
+#include "iio_adc.h"
+#include "iio_device.h"
 
 static const char binary_hdr[] = "BINARY\r\n";
 
@@ -121,6 +124,46 @@ int iiod_uart_run(struct no_os_uart_desc *uart_desc)
 
 	iio_context_destroy(ctx);
 	iiod_cleanup();
+
+	return ret;
+}
+
+int noos_iiod_run(void)
+{
+	struct no_os_uart_desc *uart_desc;
+	struct no_os_uart_init_param uart_ip = {
+		.device_id = UART_DEVICE_ID,
+		.baud_rate = UART_BAUDRATE,
+		.size = NO_OS_UART_CS_8,
+		.parity = NO_OS_UART_PAR_NO,
+		.stop = NO_OS_UART_STOP_1_BIT,
+		.asynchronous_rx = true,
+		.platform_ops = UART_OPS,
+		.extra = UART_EXTRA,
+	};
+	struct noos_iio_device_info adc_info;
+	int ret;
+
+	ret = no_os_uart_init(&uart_desc, &uart_ip);
+	if (ret)
+		return ret;
+
+	ret = iio_adc_init();
+	if (ret)
+		goto err;
+
+	ret = iio_adc_get_device_info(&adc_info);
+	if (ret)
+		goto err;
+
+	ret = noos_iio_register_device(&adc_info);
+	if (ret)
+		goto err;
+
+	ret = iiod_uart_run(uart_desc);
+
+err:
+	no_os_uart_remove(uart_desc);
 
 	return ret;
 }
