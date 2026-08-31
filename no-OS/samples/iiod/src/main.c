@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include <stdio.h>
+#include "iio_device.h"
 
 int main(void)
 {
-	return 0;
+	return noos_iiod_run();
 }
