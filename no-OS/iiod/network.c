@@ -10,12 +10,8 @@
 #include <errno.h>
 #include <no_os_print_log.h>
 #include <no_os_delay.h>
-#include <no_os_spi.h>
-#include <no_os_gpio.h>
 #include <tinyiiod/tinyiiod.h>
 #include "lwip_socket.h"
-#include "lwip_adin1110.h"
-#include "adin1110.h"
 #include "tcp_socket.h"
 #include "parameters.h"
 #include "iio_adc.h"
@@ -237,36 +233,17 @@ err_ctx:
 int noos_iiod_run(void)
 {
 	struct lwip_network_desc *lwip_desc;
-	uint8_t mac[6] = ADIN_MAC;
-	struct noos_iio_device_info adc_info;
-	int ret;
-
-	struct no_os_gpio_init_param adin_rst_gpio = {
-		.port = ADIN_RST_GPIO_PORT,
-		.number = ADIN_RST_GPIO_NUM,
-		.pull = NO_OS_PULL_NONE,
-		.platform_ops = ADIN_GPIO_OPS,
-		.extra = ADIN_GPIO_EXTRA,
-	};
-	struct no_os_spi_init_param adin_spi = {
-		.device_id = ADIN_SPI_DEVICE_ID,
-		.max_speed_hz = ADIN_SPI_SPEED,
-		.bit_order = NO_OS_SPI_BIT_ORDER_MSB_FIRST,
-		.mode = NO_OS_SPI_MODE_0,
-		.platform_ops = ADIN_SPI_OPS,
-		.chip_select = ADIN_SPI_CS,
-		.extra = ADIN_SPI_EXTRA,
-	};
-	struct adin1110_init_param adin_ip = {
-		.chip_type = ADIN1110,
-		.comm_param = adin_spi,
-		.reset_param = adin_rst_gpio,
-		.append_crc = true,
+	struct noos_net_config cfg = {
+		.lwip_ops = NET_LWIP_OPS,
+		.mac_param = NET_MAC_PARAM,
+		.mac_addr = NET_MAC_ADDR,
 	};
 	struct lwip_network_param lwip_param = {
-		.platform_ops = &adin1110_lwip_ops,
-		.mac_param = &adin_ip,
+		.platform_ops = (const struct no_os_lwip_ops *)cfg.lwip_ops,
+		.mac_param = cfg.mac_param,
 	};
+	struct noos_iio_device_info adc_info;
+	int ret;
 
 	ret = iio_adc_init();
 	if (ret)
@@ -280,8 +257,7 @@ int noos_iiod_run(void)
 	if (ret)
 		return ret;
 
-	memcpy(adin_ip.mac_address, mac, 6);
-	memcpy(lwip_param.hwaddr, mac, 6);
+	memcpy(lwip_param.hwaddr, cfg.mac_addr, 6);
 
 	ret = no_os_lwip_init(&lwip_desc, &lwip_param);
 	if (ret) {
