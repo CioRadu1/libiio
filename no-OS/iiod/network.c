@@ -9,12 +9,16 @@
 #include <string.h>
 #include <errno.h>
 #include <no_os_print_log.h>
+#include <no_os_delay.h>
 #include <tinyiiod/tinyiiod.h>
 #include "lwip_socket.h"
 #include "tcp_socket.h"
 
 #define IIOD_PORT 30431
 #define MAX_CLIENTS 4
+#define NET_WRITE_TIMEOUT_S 5
+#define NET_READ_TIMEOUT_S 3
+#define POST_DISCONNECT_DELAY_MS 100
 
 struct net_server {
 	struct tcp_socket_desc *server_socket;
@@ -26,6 +30,7 @@ struct net_server {
 };
 
 static struct net_server g_server;
+static unsigned int net_nesting_depth;
 
 struct iiod_net_pdata {
 	struct tcp_socket_desc *client;
@@ -37,6 +42,12 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size);
 static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 			      size_t size);
 
+static void net_drain(struct lwip_network_desc *lwip)
+{
+	no_os_mdelay(POST_DISCONNECT_DELAY_MS);
+	no_os_lwip_step(lwip, NULL);
+}
+
 static void net_accept_new(struct net_server *srv)
 {
 	struct tcp_socket_desc *new_client;
@@ -44,6 +55,9 @@ static void net_accept_new(struct net_server *srv)
 	int ret;
 
 	if (srv->active_count >= MAX_CLIENTS)
+		return;
+
+	if (net_nesting_depth >= MAX_CLIENTS)
 		return;
 
 	ret = socket_accept(srv->server_socket, &new_client);
@@ -57,34 +71,53 @@ static void net_accept_new(struct net_server *srv)
 	np.server = srv;
 
 	srv->active_count++;
+	net_nesting_depth++;
 
 	ret = iiod_interpreter(srv->ctx, (struct iiod_pdata *)&np,
 			       iiod_net_read, iiod_net_write,
 			       srv->xml, srv->xml_len);
+
+	net_nesting_depth--;
 
 	pr_info("IIOD: client disconnected (%d), %u remaining\n",
 		ret, srv->active_count - 1);
 
 	socket_remove(new_client);
 	srv->active_count--;
+
+	net_drain(srv->lwip);
 }
 
 static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	struct iiod_net_pdata *np = (struct iiod_net_pdata *)pdata;
 	uint8_t *dst = (uint8_t *)buf;
+	struct no_os_time deadline;
 	size_t total = 0;
 	int32_t ret;
 
+	deadline = no_os_get_time();
+	deadline.s += NET_READ_TIMEOUT_S;
+
 	while (total < size) {
-		no_os_lwip_step(np->lwip, NULL);
+		ret = no_os_lwip_step(np->lwip, NULL);
+		if (ret)
+			return -EIO;
 
 		ret = socket_recv(np->client, dst + total,
 				  (uint32_t)(size - total));
 
 		if (ret > 0) {
 			total += ret;
+			deadline = no_os_get_time();
+			deadline.s += NET_READ_TIMEOUT_S;
 		} else if (ret == 0) {
+			struct no_os_time now = no_os_get_time();
+
+			if (now.s > deadline.s ||
+			    (now.s == deadline.s && now.us >= deadline.us))
+				return -ETIMEDOUT;
+
 			if (np->server)
 				net_accept_new(np->server);
 		} else {
@@ -100,8 +133,12 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 {
 	struct iiod_net_pdata *np = (struct iiod_net_pdata *)pdata;
 	const uint8_t *src = (const uint8_t *)buf;
+	struct no_os_time deadline;
 	size_t total = 0;
 	int32_t ret;
+
+	deadline = no_os_get_time();
+	deadline.s += NET_WRITE_TIMEOUT_S;
 
 	while (total < size) {
 		ret = socket_send(np->client, src + total,
@@ -109,8 +146,18 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 
 		if (ret > 0) {
 			total += ret;
+			deadline = no_os_get_time();
+			deadline.s += NET_WRITE_TIMEOUT_S;
 		} else if (ret == 0) {
-			no_os_lwip_step(np->lwip, NULL);
+			struct no_os_time now = no_os_get_time();
+
+			if (now.s > deadline.s ||
+			    (now.s == deadline.s && now.us >= deadline.us))
+				return -ETIMEDOUT;
+
+			ret = no_os_lwip_step(np->lwip, NULL);
+			if (ret)
+				return -EIO;
 		} else {
 			return -EIO;
 		}
@@ -212,6 +259,8 @@ int iiod_network_run(struct lwip_network_desc *lwip_desc)
 
 		socket_remove(client_socket);
 		g_server.active_count--;
+
+		net_drain(lwip_desc);
 	}
 
 err_server:
