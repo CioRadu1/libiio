@@ -13,5 +13,7 @@ int iio_adc_hal_init(void);
 unsigned int iio_adc_hal_num_channels(void);
 const char *iio_adc_hal_channel_id(unsigned int channel);
 int iio_adc_hal_read_raw(unsigned int channel, int *value);
+unsigned int iio_adc_hal_resolution_bits(void);
+int iio_adc_hal_ref_voltage_mv(void);
 
 #endif /* IIO_ADC_HAL_H */

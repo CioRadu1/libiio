@@ -36,6 +36,16 @@ const char *iio_adc_hal_channel_id(unsigned int channel)
 	return channel_map[channel].id;
 }
 
+unsigned int iio_adc_hal_resolution_bits(void)
+{
+	return 12;
+}
+
+int iio_adc_hal_ref_voltage_mv(void)
+{
+	return 1250;
+}
+
 int iio_adc_hal_read_raw(unsigned int channel, int *value)
 {
 	mxc_adc_slot_req_t slot_req;
