@@ -80,6 +80,7 @@ endif()
 # ---------- IIO ADC device driver ----------
 set(IIO_ADC_SRCS
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_adc.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_val.c
 )
 
 # ---------- Application ----------
