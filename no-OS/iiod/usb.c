@@ -27,6 +27,7 @@
 #define IIO_USB_NUM_PIPES	2
 
 #define USB_IO_TIMEOUT_MS	10000
+#define USB_IO_PACING_US	200
 
 #define IIO_USD_CMD_RESET_PIPES	 0
 #define IIO_USD_CMD_OPEN_PIPE	 1
@@ -441,8 +442,7 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 	 * that delivered the command header.
 	 */
 	if (pipe_locked) {
-		pr_info("USB RD: pipe%d (locked), %u bytes\n",
-			 current_read_pipe, (unsigned)size);
+		no_os_udelay(USB_IO_PACING_US);
 		return iiod_usb_read_single(buf, size, current_read_pipe);
 	}
 
@@ -552,8 +552,7 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 			current_read_pipe = 1;
 		}
 
-		pr_info("USB RD: pipe%d (mux, p1_open=%d), %u bytes\n",
-			 got_pipe, p1_started, (unsigned)size);
+		no_os_udelay(USB_IO_PACING_US);
 
 		/* Lock to this pipe until the response write unlocks it */
 		pipe_locked = 1;
@@ -586,8 +585,7 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 	/* Route the response to the same pipe the command came from */
 	ep_in = current_read_pipe ? IIO_USB_EP1_IN : IIO_USB_EP_IN;
 
-	pr_info("USB WR: pipe%d, %u bytes\n",
-		 current_read_pipe, (unsigned)size);
+	no_os_udelay(USB_IO_PACING_US);
 
 	while (total < size) {
 		MXC_USB_Req_t req = {0};
