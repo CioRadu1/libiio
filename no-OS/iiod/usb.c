@@ -808,16 +808,6 @@ int iiod_usb_run(void)
 			 "(pipe_active=%d, pipe1=%d)\n",
 			 pipe_active, pipe1_opened);
 
-		/*
-		 * Force a full re-sync for the next client. The interpreter
-		 * may have exited on a timeout (not a real disconnect) while
-		 * pipe_active is still set, or stale bytes may be queued on the
-		 * OUT endpoints from the previous session. Clear pipe_active so
-		 * the loop waits for a fresh OPEN_PIPE(0), cancel any pending
-		 * transfers, and reset all per-session state before re-arming.
-		 * Without this the next handshake can read stale data, mis-frame
-		 * and hang (the intermittent "second connect fails").
-		 */
 		NVIC_DisableIRQ(USB_IRQn);
 		usb_cancel_pending();
 		pipe_active = 0;

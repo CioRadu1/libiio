@@ -108,6 +108,7 @@ set(COMMON_DEFS
   WITH_LIBTINYIIOD=1
   WITH_EXTERNAL_BACKEND=1
   WITH_IIOD_USB_DMABUF=0
+  WITH_IIOD_V0_COMPAT=0
   WITH_LOCAL_BACKEND=0
   WITH_NETWORK_BACKEND=0
   WITH_SERIAL_BACKEND=0
@@ -130,13 +131,12 @@ set(COMMON_DEFS
 )
 
 ###############################################################################
-# Cross-compilation for MAX32690 (CMAKE_SYSTEM_NAME == "Generic")
+# Cross-compilation for a bare-metal board (CMAKE_SYSTEM_NAME == "Generic")
 ###############################################################################
 if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 
-  if(NOT DEFINED MSDK_DIR)
-    set(MSDK_DIR $ENV{HOME}/MaximSDK)
-  endif()
+  set(BOARD max32690 CACHE STRING "Target board")
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boards/${BOARD}.cmake)
 
   option(WITH_LWIP_NETWORKING "Enable lwIP + ADIN1110 network transport" ON)
 
@@ -155,12 +155,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     )
   endif()
 
-  set(MSDK_PERIPH  ${MSDK_DIR}/Libraries/PeriphDrivers)
-  set(MSDK_CMSIS   ${MSDK_DIR}/Libraries/CMSIS)
-  set(PLATFORM_DIR ${NOOS_DIR}/drivers/platform/maxim/max32690)
-  set(PLATFORM maxim)
-
   if(WITH_LWIP_NETWORKING)
+    set(NET_CHIP adin1110 CACHE STRING "Ethernet netdev chip")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/netdevs/${NET_CHIP}.cmake)
     set(LWIP_DIR ${NOOS_DIR}/libraries/lwip/lwip)
     if(NOT DEFINED NO_OS_IP)
       set(NO_OS_IP "192.0.2.1")
@@ -172,67 +169,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
       set(NO_OS_GATEWAY "192.0.2.2")
     endif()
   endif()
-
-  # --- MSDK startup & system sources ---
-  set(MSDK_STARTUP_SRCS
-    ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/GCC/startup_max32690.S
-    ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/system_max32690.c
-    ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/heap.c
-  )
-
-  # --- MSDK peripheral driver sources ---
-  set(MSDK_PERIPH_SRCS
-    # SYS
-    ${MSDK_PERIPH}/Source/SYS/mxc_assert.c
-    ${MSDK_PERIPH}/Source/SYS/mxc_delay.c
-    ${MSDK_PERIPH}/Source/SYS/mxc_lock.c
-    ${MSDK_PERIPH}/Source/SYS/nvic_table.c
-    ${MSDK_PERIPH}/Source/SYS/pins_me18.c
-    ${MSDK_PERIPH}/Source/SYS/sys_me18.c
-    # GPIO
-    ${MSDK_PERIPH}/Source/GPIO/gpio_common.c
-    ${MSDK_PERIPH}/Source/GPIO/gpio_me18.c
-    ${MSDK_PERIPH}/Source/GPIO/gpio_reva.c
-    # ICC
-    ${MSDK_PERIPH}/Source/ICC/icc_me18.c
-    ${MSDK_PERIPH}/Source/ICC/icc_reva.c
-    # UART
-    ${MSDK_PERIPH}/Source/UART/uart_common.c
-    ${MSDK_PERIPH}/Source/UART/uart_me18.c
-    ${MSDK_PERIPH}/Source/UART/uart_revb.c
-    # DMA
-    ${MSDK_PERIPH}/Source/DMA/dma_me18.c
-    ${MSDK_PERIPH}/Source/DMA/dma_reva.c
-    # ADC
-    ${MSDK_PERIPH}/Source/ADC/adc_me18.c
-    ${MSDK_PERIPH}/Source/ADC/adc_revb.c
-    # SPI (for ADIN1110)
-    ${MSDK_PERIPH}/Source/SPI/spi_me18.c
-    ${MSDK_PERIPH}/Source/SPI/spi_reva1.c
-    # FLC (required by sys_me18.c)
-    ${MSDK_PERIPH}/Source/FLC/flc_common.c
-    ${MSDK_PERIPH}/Source/FLC/flc_me18.c
-    ${MSDK_PERIPH}/Source/FLC/flc_reva.c
-    # TMR (for maxim_timer)
-    ${MSDK_PERIPH}/Source/TMR/tmr_me18.c
-    ${MSDK_PERIPH}/Source/TMR/tmr_revb.c
-    # RTC (required by maxim_irq)
-    ${MSDK_PERIPH}/Source/RTC/rtc_me18.c
-    ${MSDK_PERIPH}/Source/RTC/rtc_reva.c
-  )
-
-  # --- no-OS Maxim platform drivers ---
-  set(NOOS_MAXIM_SRCS
-    ${PLATFORM_DIR}/maxim_uart.c
-    ${PLATFORM_DIR}/maxim_uart_stdio.c
-    ${PLATFORM_DIR}/maxim_irq.c
-    ${PLATFORM_DIR}/maxim_delay.c
-    ${PLATFORM_DIR}/maxim_init.c
-    ${PLATFORM_DIR}/maxim_gpio.c
-    ${PLATFORM_DIR}/maxim_spi.c
-    ${PLATFORM_DIR}/maxim_timer.c
-    ${NOOS_DIR}/drivers/platform/maxim/common/maxim_dma.c
-  )
 
   # --- Additional no-OS API & utility sources ---
   set(NOOS_EXTRA_SRCS
@@ -247,13 +183,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     ${NOOS_DIR}/util/no_os_crc8.c
   )
 
-  # --- Networking sources (ADIN1110 + lwIP) ---
+  # --- Networking sources (netdev chip + lwIP) ---
   if(WITH_LWIP_NETWORKING)
-    set(ADIN1110_SRCS
-      ${NOOS_DIR}/drivers/net/adin1110/adin1110.c
-      ${NOOS_DIR}/drivers/net/oa_tc6/oa_tc6.c
-    )
-
     file(GLOB LWIP_CORE_SRCS    ${LWIP_DIR}/src/core/*.c)
     file(GLOB LWIP_CORE4_SRCS   ${LWIP_DIR}/src/core/ipv4/*.c)
     file(GLOB LWIP_API_SRCS     ${LWIP_DIR}/src/api/*.c)
@@ -263,7 +194,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 
     set(LWIP_SOCKET_SRCS
       ${NOOS_DIR}/network/lwip_raw_socket/lwip_socket.c
-      ${NOOS_DIR}/network/lwip_raw_socket/netdevs/adin1110/lwip_adin1110.c
     )
   endif()
 
@@ -274,11 +204,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     ${NOOS_PLATFORM_SRCS}
     ${NOOS_EXTRA_SRCS}
     ${IIO_ADC_SRCS}
-    ${MSDK_STARTUP_SRCS}
-    ${MSDK_PERIPH_SRCS}
-    ${NOOS_MAXIM_SRCS}
+    ${BOARD_ADC_SRC}
+    ${BOARD_STARTUP_SRCS}
+    ${BOARD_PERIPH_SRCS}
+    ${BOARD_PLATFORM_SRCS}
     ${MAXUSB_SRCS}
-    ${ADIN1110_SRCS}
+    ${NET_CHIP_SRCS}
     ${LWIP_CORE_SRCS}
     ${LWIP_CORE4_SRCS}
     ${LWIP_API_SRCS}
@@ -291,65 +222,24 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 
   target_include_directories(libiio-noos PRIVATE
     ${COMMON_INCLUDES}
+    ${BOARD_INCLUDES}
 
-    # Platform parameters (parameters.h)
-    ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/src/platform/${PLATFORM}
+    ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/src/platform/${BOARD_PLATFORM_NAME}
 
-    # MSDK CMSIS & peripheral headers
-    ${MSDK_CMSIS}/Device/Maxim/MAX32690/Include
-    ${MSDK_CMSIS}/5.9.0/Core/Include
-    ${MSDK_PERIPH}/Include/MAX32690
-
-    # MSDK internal peripheral source headers
-    ${MSDK_PERIPH}/Source/SYS
-    ${MSDK_PERIPH}/Source/UART
-    ${MSDK_PERIPH}/Source/GPIO
-    ${MSDK_PERIPH}/Source/DMA
-    ${MSDK_PERIPH}/Source/ICC
-    ${MSDK_PERIPH}/Source/ADC
-    ${MSDK_PERIPH}/Source/SPI
-    ${MSDK_PERIPH}/Source/FLC
-    ${MSDK_PERIPH}/Source/TMR
-    ${MSDK_PERIPH}/Source/RTC
-
-    # no-OS Maxim platform driver headers
-    ${PLATFORM_DIR}
-    ${NOOS_DIR}/drivers/platform/maxim/common
-
-    # MAXUSB headers (USB transport)
     ${MAXUSB_INCLUDES}
+    ${NET_CHIP_INCLUDES}
 
-    # ADIN1110 driver headers
-    ${NOOS_DIR}/drivers/net/adin1110
-    ${NOOS_DIR}/drivers/net/oa_tc6
-
-    # lwIP headers
     ${LWIP_DIR}/src/include
     ${LWIP_DIR}/src/include/compat
     ${LWIP_DIR}/src/include/netif
     ${NOOS_DIR}/libraries/lwip/configs
-    ${NOOS_DIR}/libraries/lwip        # parent of arch/ so #include "arch/cc.h" works
+    ${NOOS_DIR}/libraries/lwip
     ${NOOS_DIR}/network/lwip_raw_socket
-    ${NOOS_DIR}/network/lwip_raw_socket/netdevs/adin1110
   )
 
   target_compile_definitions(libiio-noos PRIVATE
     ${COMMON_DEFS}
-    TARGET=MAX32690
-    TARGET_NUM=32690
-    TARGET_REV=0x4131
-    MAX32690
-    # Memory defines for startup .S
-    FLASH_ORIGIN=0x10000000
-    FLASH_SIZE=0x340000
-    SRAM_ORIGIN=0x20000000
-    SRAM_SIZE=0x100000
-    # 64 KB stack for nested iiod_interpreter calls (network transport).
-    # Each cooperative client nesting adds ~8 KB of stack (iiod_interpreter
-    # frame + responder processing). With MAX_CLIENTS=4, worst case is
-    # ~32 KB for interpreter frames alone, plus lwIP and buffer operations.
-    # 64 KB gives comfortable headroom. MAX32690 has 1 MB SRAM.
-    __STACK_SIZE=0x10000
+    ${BOARD_DEFS}
   )
 
   if(WITH_IIOD_USB)
@@ -364,16 +254,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
       NO_OS_IP="${NO_OS_IP}"
       NO_OS_NETMASK="${NO_OS_NETMASK}"
       NO_OS_GATEWAY="${NO_OS_GATEWAY}"
+      NETDEV_HEADER="${NET_CHIP_HEADER}"
     )
   endif()
 
   target_compile_options(libiio-noos PRIVATE -Wall -Og -g)
 
-  # --- Linker settings ---
-  set(LINKER_SCRIPT ${MSDK_CMSIS}/Device/Maxim/MAX32690/Source/GCC/max32690.ld)
-
   target_link_options(libiio-noos PRIVATE
-    -T${LINKER_SCRIPT}
+    -T${BOARD_LINKER_SCRIPT}
     -Wl,--entry=Reset_Handler
     -Wl,--gc-sections
   )
