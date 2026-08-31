@@ -64,6 +64,7 @@ static void net_accept_new(struct net_server *srv)
 
 	pr_info("IIOD: client disconnected (%d), %u remaining\n",
 		ret, srv->active_count - 1);
+
 	socket_remove(new_client);
 	srv->active_count--;
 }
@@ -80,14 +81,14 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 
 		ret = socket_recv(np->client, dst + total,
 				  (uint32_t)(size - total));
+
 		if (ret > 0) {
 			total += ret;
 		} else if (ret == 0) {
-			/* No data yet — accept new connections while waiting */
 			if (np->server)
 				net_accept_new(np->server);
 		} else {
-			return -1;
+			return -EIO;
 		}
 	}
 
@@ -105,16 +106,18 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 	while (total < size) {
 		ret = socket_send(np->client, src + total,
 				  (uint32_t)(size - total));
+
 		if (ret > 0) {
 			total += ret;
 		} else if (ret == 0) {
 			no_os_lwip_step(np->lwip, NULL);
 		} else {
-			return -1;
+			return -EIO;
 		}
 	}
 
 	no_os_lwip_step(np->lwip, NULL);
+
 	return (ssize_t)total;
 }
 
@@ -180,8 +183,7 @@ int iiod_network_run(struct lwip_network_desc *lwip_desc)
 	g_server.xml_len = xml_len;
 	g_server.active_count = 0;
 
-	pr_info("IIOD: listening on port %d (xml %zu bytes)\n",
-		IIOD_PORT, xml_len);
+	pr_info("IIOD: listening on port %d\n", IIOD_PORT);
 
 	while (1) {
 		ret = socket_accept(server_socket, &client_socket);
@@ -207,6 +209,7 @@ int iiod_network_run(struct lwip_network_desc *lwip_desc)
 				       xml, xml_len);
 
 		pr_info("IIOD: client disconnected (%d)\n", ret);
+
 		socket_remove(client_socket);
 		g_server.active_count--;
 	}

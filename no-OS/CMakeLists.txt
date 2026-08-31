@@ -38,6 +38,7 @@ set(LIBIIO_SRCS
 # ---------- transport options ----------
 option(WITH_IIOD_UART    "Build UART transport"    ON)
 option(WITH_IIOD_NETWORK "Build network transport"  ON)
+option(WITH_IIOD_USB     "Build USB transport"     OFF)
 
 # ---------- no-OS backend / transport sources ----------
 set(NOOS_BACKEND_SRCS
@@ -53,6 +54,12 @@ endif()
 if(WITH_IIOD_NETWORK)
   list(APPEND NOOS_BACKEND_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/iiod/network.c
+  )
+endif()
+
+if(WITH_IIOD_USB)
+  list(APPEND NOOS_BACKEND_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/usb.c
   )
 endif()
 
@@ -128,6 +135,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
   endif()
 
   option(WITH_LWIP_NETWORKING "Enable lwIP + ADIN1110 network transport" ON)
+
+  # --- MAXUSB library (for USB transport) ---
+  if(WITH_IIOD_USB)
+    set(MAXUSB_DIR ${MSDK_DIR}/Libraries/MAXUSB)
+    set(MAXUSB_SRCS
+      ${MAXUSB_DIR}/src/core/musbhsfc/usb.c
+      ${MAXUSB_DIR}/src/core/usb_event.c
+      ${MAXUSB_DIR}/src/enumerate/enumerate.c
+    )
+    set(MAXUSB_INCLUDES
+      ${MAXUSB_DIR}/include/core
+      ${MAXUSB_DIR}/include/core/musbhsfc
+      ${MAXUSB_DIR}/include/enumerate
+    )
+  endif()
 
   set(MSDK_PERIPH  ${MSDK_DIR}/Libraries/PeriphDrivers)
   set(MSDK_CMSIS   ${MSDK_DIR}/Libraries/CMSIS)
@@ -250,6 +272,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     ${MSDK_STARTUP_SRCS}
     ${MSDK_PERIPH_SRCS}
     ${NOOS_MAXIM_SRCS}
+    ${MAXUSB_SRCS}
     ${ADIN1110_SRCS}
     ${LWIP_CORE_SRCS}
     ${LWIP_CORE4_SRCS}
@@ -285,6 +308,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     ${PLATFORM_DIR}
     ${NOOS_DIR}/drivers/platform/maxim/common
 
+    # MAXUSB headers (USB transport)
+    ${MAXUSB_INCLUDES}
+
     # ADIN1110 driver headers
     ${NOOS_DIR}/drivers/net/adin1110
     ${NOOS_DIR}/drivers/net/oa_tc6
@@ -310,9 +336,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     FLASH_SIZE=0x340000
     SRAM_ORIGIN=0x20000000
     SRAM_SIZE=0x100000
-    # 32 KB stack for nested iiod_interpreter calls (network transport)
-    __STACK_SIZE=0x8000
+    # 64 KB stack for nested iiod_interpreter calls (network transport).
+    # Each cooperative client nesting adds ~8 KB of stack (iiod_interpreter
+    # frame + responder processing). With MAX_CLIENTS=4, worst case is
+    # ~32 KB for interpreter frames alone, plus lwIP and buffer operations.
+    # 64 KB gives comfortable headroom. MAX32690 has 1 MB SRAM.
+    __STACK_SIZE=0x10000
   )
+
+  if(WITH_IIOD_USB)
+    target_compile_definitions(libiio-noos PRIVATE NO_OS_USB_TRANSPORT)
+  endif()
 
   if(WITH_LWIP_NETWORKING)
     target_compile_definitions(libiio-noos PRIVATE
