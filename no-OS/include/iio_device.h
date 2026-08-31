@@ -9,6 +9,7 @@
 
 #include <iio/iio.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,9 @@ typedef int (*noos_iio_read_samples_t)(void *dev, void *data, size_t bytes);
 typedef int (*noos_iio_write_samples_t)(void *dev, const void *data,
 					size_t bytes);
 
+typedef int (*noos_iio_reg_read_t)(void *dev, uint32_t reg, uint32_t *val);
+typedef int (*noos_iio_reg_write_t)(void *dev, uint32_t reg, uint32_t val);
+
 /**
  * struct noos_iio_device_info - describes one IIO device for the backend
  * @name:          human-readable device name
@@ -48,6 +52,8 @@ typedef int (*noos_iio_write_samples_t)(void *dev, const void *data,
  * @write_attr:    write an attribute value (may be NULL)
  * @read_samples:  read sample data from hardware (RX, may be NULL)
  * @write_samples: write sample data to hardware (TX, may be NULL)
+ * @reg_read:      read a device register (may be NULL)
+ * @reg_write:     write a device register (may be NULL)
  */
 struct noos_iio_device_info {
 	const char *name;
@@ -58,6 +64,8 @@ struct noos_iio_device_info {
 	noos_iio_write_attr_t write_attr;
 	noos_iio_read_samples_t read_samples;
 	noos_iio_write_samples_t write_samples;
+	noos_iio_reg_read_t reg_read;
+	noos_iio_reg_write_t reg_write;
 };
 
 /**
