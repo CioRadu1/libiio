@@ -207,6 +207,30 @@ noos_get_trigger(const struct iio_device *dev)
 	return NULL;
 }
 
+static int noos_reg_read(const struct iio_device *dev, uint32_t address,
+			 uint32_t *value)
+{
+	struct noos_iio_device_info *info =
+		(struct noos_iio_device_info *)iio_device_get_pdata(dev);
+
+	if (!info || !info->reg_read)
+		return -ENOSYS;
+
+	return info->reg_read(info->dev, address, value);
+}
+
+static int noos_reg_write(const struct iio_device *dev, uint32_t address,
+			  uint32_t value)
+{
+	struct noos_iio_device_info *info =
+		(struct noos_iio_device_info *)iio_device_get_pdata(dev);
+
+	if (!info || !info->reg_write)
+		return -ENOSYS;
+
+	return info->reg_write(info->dev, address, value);
+}
+
 static struct iio_context *
 noos_create_context(const struct iio_context_params *params, const char *args)
 {
@@ -279,6 +303,9 @@ static const struct iio_backend_ops noos_ops = {
 	.free_block = noos_free_block,
 	.enqueue_block = noos_enqueue_block,
 	.dequeue_block = noos_dequeue_block,
+
+	.reg_read = noos_reg_read,
+	.reg_write = noos_reg_write,
 };
 
 const struct iio_backend iio_external_backend = {
