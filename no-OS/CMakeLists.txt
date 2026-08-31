@@ -153,11 +153,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
       ${MAXUSB_DIR}/src/core/musbhsfc/usb.c
       ${MAXUSB_DIR}/src/core/usb_event.c
       ${MAXUSB_DIR}/src/enumerate/enumerate.c
+      ${MAXUSB_DIR}/src/devclass/cdc_acm.c
+      ${PLATFORM_DIR}/maxim_usb_uart.c
+      ${NOOS_DIR}/util/no_os_lf256fifo.c
     )
     set(MAXUSB_INCLUDES
       ${MAXUSB_DIR}/include/core
       ${MAXUSB_DIR}/include/core/musbhsfc
       ${MAXUSB_DIR}/include/enumerate
+      ${MAXUSB_DIR}/include/devclass
     )
   endif()
 
@@ -249,7 +253,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
   )
 
   if(WITH_IIOD_USB)
-    target_compile_definitions(libiio-noos PRIVATE NO_OS_USB_TRANSPORT)
+    string(TOUPPER ${BOARD} BOARD_UPPER)
+    target_compile_definitions(libiio-noos PRIVATE
+      NO_OS_USB_TRANSPORT
+      NO_OS_USB_PRODUCT="${BOARD_UPPER} IIO"
+    )
   endif()
 
   if(WITH_LWIP_NETWORKING)
