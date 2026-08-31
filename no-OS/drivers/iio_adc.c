@@ -416,6 +416,30 @@ static int iio_adc_write_attr(void *dev,
 	return -EINVAL;
 }
 
+/* Small register file for iio_reg demonstration. */
+#define ADC_NUM_REGS 16
+static uint32_t adc_regs[ADC_NUM_REGS];
+
+static int iio_adc_reg_read(void *dev, uint32_t reg, uint32_t *val)
+{
+	if (reg >= ADC_NUM_REGS)
+		return -EINVAL;
+
+	*val = adc_regs[reg];
+
+	return 0;
+}
+
+static int iio_adc_reg_write(void *dev, uint32_t reg, uint32_t val)
+{
+	if (reg >= ADC_NUM_REGS)
+		return -EINVAL;
+
+	adc_regs[reg] = val;
+
+	return 0;
+}
+
 int iio_adc_init(void)
 {
 	mxc_adc_req_t adc_cfg = {
@@ -444,6 +468,8 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 	info->read_attr = iio_adc_read_attr;
 	info->write_attr = iio_adc_write_attr;
 	info->read_samples = iio_adc_read_samples;
+	info->reg_read = iio_adc_reg_read;
+	info->reg_write = iio_adc_reg_write;
 
 	return 0;
 }
