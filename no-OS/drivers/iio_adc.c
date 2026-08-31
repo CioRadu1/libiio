@@ -15,16 +15,40 @@
 #include <iio/iio-backend.h>
 
 static const char *const gain_values[] = {
-	"1/6", "1/5", "1/4", "2/7", "1/3", "2/5", "1/2", "2/3", "4/5",
-	"1", "2", "3", "4", "6", "8", "12", "16", "24", "32", "64", "128",
+	[IIO_ADC_GAIN_1_6] = "1/6",
+	[IIO_ADC_GAIN_1_5] = "1/5",
+	[IIO_ADC_GAIN_1_4] = "1/4",
+	[IIO_ADC_GAIN_2_7] = "2/7",
+	[IIO_ADC_GAIN_1_3] = "1/3",
+	[IIO_ADC_GAIN_2_5] = "2/5",
+	[IIO_ADC_GAIN_1_2] = "1/2",
+	[IIO_ADC_GAIN_2_3] = "2/3",
+	[IIO_ADC_GAIN_4_5] = "4/5",
+	[IIO_ADC_GAIN_1]   = "1",
+	[IIO_ADC_GAIN_2]   = "2",
+	[IIO_ADC_GAIN_3]   = "3",
+	[IIO_ADC_GAIN_4]   = "4",
+	[IIO_ADC_GAIN_6]   = "6",
+	[IIO_ADC_GAIN_8]   = "8",
+	[IIO_ADC_GAIN_12]  = "12",
+	[IIO_ADC_GAIN_16]  = "16",
+	[IIO_ADC_GAIN_24]  = "24",
+	[IIO_ADC_GAIN_32]  = "32",
+	[IIO_ADC_GAIN_64]  = "64",
+	[IIO_ADC_GAIN_128] = "128",
 };
-#define GAIN_DEFAULT_IDX 9
+#define GAIN_DEFAULT_IDX IIO_ADC_GAIN_1
 
 static const char *const reference_values[] = {
-	"VDD", "VDD/2", "VDD/3", "VDD/4",
-	"Internal", "External0", "External1",
+	[IIO_ADC_REF_VDD_1]     = "VDD",
+	[IIO_ADC_REF_VDD_1_2]   = "VDD/2",
+	[IIO_ADC_REF_VDD_1_3]   = "VDD/3",
+	[IIO_ADC_REF_VDD_1_4]   = "VDD/4",
+	[IIO_ADC_REF_INTERNAL]  = "Internal",
+	[IIO_ADC_REF_EXTERNAL0] = "External0",
+	[IIO_ADC_REF_EXTERNAL1] = "External1",
 };
-#define REFERENCE_DEFAULT_IDX 4
+#define REFERENCE_DEFAULT_IDX IIO_ADC_REF_INTERNAL
 
 struct adc_channel_state {
 	int scale_val;
@@ -279,6 +303,14 @@ static int iio_adc_write_attr(void *dev,
 					 src, len);
 		if (str_idx < 0)
 			return str_idx;
+
+		if (iio_adc_hal.set_gain) {
+			ret = iio_adc_hal.set_gain((unsigned int)idx,
+						   (unsigned int)str_idx);
+			if (ret)
+				return ret;
+		}
+
 		chan_state[idx].gain = (unsigned int)str_idx;
 		return len;
 	}
@@ -289,6 +321,14 @@ static int iio_adc_write_attr(void *dev,
 					 src, len);
 		if (str_idx < 0)
 			return str_idx;
+
+		if (iio_adc_hal.set_reference) {
+			ret = iio_adc_hal.set_reference((unsigned int)idx,
+							(unsigned int)str_idx);
+			if (ret)
+				return ret;
+		}
+
 		chan_state[idx].reference = (unsigned int)str_idx;
 		return len;
 	}
