@@ -86,6 +86,31 @@ out:
 	return ret;
 }
 
+static int max32690_adc_set_reference(unsigned int channel,
+				      unsigned int reference)
+{
+	mxc_adc_refsel_t ref;
+
+	if (channel >= NO_OS_ARRAY_SIZE(max32690_channels))
+		return -EINVAL;
+
+	switch (reference) {
+	case IIO_ADC_REF_INTERNAL:
+		ref = MXC_ADC_REF_INT_1V25;
+		break;
+	case IIO_ADC_REF_EXTERNAL0:
+		ref = MXC_ADC_REF_EXT;
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	if (MXC_ADC_ReferenceSelect(ref))
+		return -EINVAL;
+
+	return 0;
+}
+
 const struct iio_adc_hal iio_adc_hal = {
 	.channels        = max32690_channels,
 	.num_channels    = NO_OS_ARRAY_SIZE(max32690_channels),
@@ -93,4 +118,5 @@ const struct iio_adc_hal iio_adc_hal = {
 	.ref_voltage_mv  = 1250,
 	.init            = max32690_adc_init,
 	.read_raw        = max32690_adc_read_raw,
+	.set_reference   = max32690_adc_set_reference,
 };
