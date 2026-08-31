@@ -244,7 +244,7 @@ static const struct iio_backend_ops noos_ops = {
 const struct iio_backend iio_external_backend = {
 	.name = "no-os",
 	.api_version = IIO_BACKEND_API_V1,
-	.default_timeout_ms = 15000,
+	.default_timeout_ms = 0,
 	.uri_prefix = "no-os:",
 	.ops = &noos_ops,
 };
