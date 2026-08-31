@@ -15,7 +15,9 @@
 #include "maxim_uart_stdio.h"
 #endif
 
-#ifdef NO_OS_LWIP_NETWORKING
+#if defined(NO_OS_USB_TRANSPORT)
+extern int iiod_usb_run(void);
+#elif defined(NO_OS_LWIP_NETWORKING)
 #include "lwip_socket.h"
 #include "lwip_adin1110.h"
 #include "adin1110.h"
@@ -61,25 +63,33 @@ int main(void)
 	if (ret)
 		return ret;
 
-#ifdef NO_OS_LWIP_NETWORKING
-	/* Use UART for debug console output in network mode */
+#if defined(NO_OS_USB_TRANSPORT) || defined(NO_OS_LWIP_NETWORKING)
+	/* Use UART for debug console output in USB/network mode */
 	no_os_uart_stdio(uart_desc);
 #endif
 
 	/* Init on-chip ADC and register as IIO device */
 	ret = iio_adc_init();
-	if (ret)
-		goto cleanup;
+	if (ret) {
+		no_os_uart_remove(uart_desc);
+		return ret;
+	}
 
 	ret = iio_adc_get_device_info(&adc_info);
-	if (ret)
-		goto cleanup;
+	if (ret) {
+		no_os_uart_remove(uart_desc);
+		return ret;
+	}
 
 	ret = noos_iio_register_device(&adc_info);
-	if (ret)
-		goto cleanup;
+	if (ret) {
+		no_os_uart_remove(uart_desc);
+		return ret;
+	}
 
-#ifdef NO_OS_LWIP_NETWORKING
+#if defined(NO_OS_USB_TRANSPORT)
+	ret = iiod_usb_run();
+#elif defined(NO_OS_LWIP_NETWORKING)
 	{
 		struct lwip_network_desc *lwip_desc;
 		uint8_t mac[6] = {0x00, 0x18, 0x80, 0x03, 0x25, 0x60};
@@ -128,7 +138,8 @@ int main(void)
 		ret = no_os_lwip_init(&lwip_desc, &lwip_param);
 		if (ret) {
 			pr_err("lwIP init failed: %d\n", ret);
-			goto cleanup;
+			no_os_uart_remove(uart_desc);
+			return ret;
 		}
 
 		ret = iiod_network_run(lwip_desc);
@@ -138,7 +149,6 @@ int main(void)
 	ret = iiod_uart_run(uart_desc);
 #endif
 
-cleanup:
 	no_os_uart_remove(uart_desc);
 
 	return ret;
