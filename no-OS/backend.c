@@ -260,7 +260,7 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 		if (info->add_channels)
 			info->add_channels(info->dev, iio_dev);
 
-		{
+		if (iio_device_get_channels_count(iio_dev) > 0) {
 			struct iio_buffer *buf;
 
 			buf = iio_device_add_buffer(iio_dev, 0);
