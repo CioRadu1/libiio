@@ -9,6 +9,8 @@
 #include <no_os_print_log.h>
 #include <no_os_delay.h>
 #include <tinyiiod/tinyiiod.h>
+#include "iio_adc.h"
+#include "iio_device.h"
 
 #include "mxc_sys.h"
 #include "mxc_errors.h"
@@ -820,4 +822,24 @@ int iiod_usb_run(void)
 	iiod_cleanup();
 
 	return ret;
+}
+
+int noos_iiod_run(void)
+{
+	struct noos_iio_device_info adc_info;
+	int ret;
+
+	ret = iio_adc_init();
+	if (ret)
+		return ret;
+
+	ret = iio_adc_get_device_info(&adc_info);
+	if (ret)
+		return ret;
+
+	ret = noos_iio_register_device(&adc_info);
+	if (ret)
+		return ret;
+
+	return iiod_usb_run();
 }

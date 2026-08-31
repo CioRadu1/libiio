@@ -68,6 +68,14 @@ struct noos_iio_device_info {
  */
 int noos_iio_register_device(const struct noos_iio_device_info *info);
 
+/**
+ * noos_iiod_run() - bring up and run the IIOD server for the built transport
+ *
+ * Implemented by each transport; only the one selected at build time is
+ * compiled. Returns a negative error code on setup failure.
+ */
+int noos_iiod_run(void);
+
 /* Accessed by the backend – not for direct application use */
 extern struct noos_iio_device_info noos_iio_devices[];
 extern unsigned int noos_iio_device_count;

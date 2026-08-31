@@ -7,10 +7,12 @@
 #ifndef IIOD_PARAMETERS_H
 #define IIOD_PARAMETERS_H
 
+/* ---------- UART ---------- */
+#if !defined(NO_OS_USB_TRANSPORT) && !defined(NO_OS_LWIP_NETWORKING)
+
 #include "maxim_uart.h"
 #include "maxim_uart_stdio.h"
 
-/* ---------- UART ---------- */
 #define UART_DEVICE_ID		0
 #define UART_BAUDRATE		115200
 #define UART_OPS		&max_uart_ops
@@ -19,6 +21,8 @@ static struct max_uart_init_param iiod_uart_extra = {
 	.flow = MAX_UART_FLOW_DIS,
 };
 #define UART_EXTRA		&iiod_uart_extra
+
+#endif /* UART transport */
 
 /* ---------- Network (ADIN1110) ---------- */
 #ifdef NO_OS_LWIP_NETWORKING
