@@ -9,10 +9,6 @@ set(MSDK_PERIPH  ${MSDK_DIR}/Libraries/PeriphDrivers)
 set(MSDK_CMSIS   ${MSDK_DIR}/Libraries/CMSIS)
 set(PLATFORM_DIR ${NOOS_DIR}/drivers/platform/maxim/max32655)
 
-set(BOARD_ADC_SRC
-  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${BOARD}/${BOARD}.c
-)
-
 set(BOARD_STARTUP_SRCS
   ${MSDK_CMSIS}/Device/Maxim/MAX32655/Source/GCC/startup_max32655.S
   ${MSDK_CMSIS}/Device/Maxim/MAX32655/Source/system_max32655.c
@@ -88,6 +84,7 @@ set(BOARD_DEFS
   TARGET_NUM=32655
   TARGET_REV=0x4131
   MAX32655
+  IIO_ADC_REF_VOLTAGE_MV=1220
   FLASH_ORIGIN=0x10000000
   FLASH_SIZE=0x80000
   SRAM_ORIGIN=0x20000000
