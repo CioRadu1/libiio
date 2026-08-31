@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <no_os_util.h>
 #include "iio_adc_hal.h"
 
 static const uint16_t sine_lut[32] = {
@@ -16,41 +17,26 @@ static const uint16_t sine_lut[32] = {
 	0x0000, 0x0276, 0x09be, 0x1592, 0x257d, 0x38e3, 0x4f04, 0x6707,
 };
 
-#define NUM_CHANNELS 2
-
-static const char *const channel_ids[NUM_CHANNELS] = {
+static const char *const adc_demo_channels[] = {
 	"voltage0",
 	"voltage1",
 };
 
-static unsigned int lut_index[NUM_CHANNELS];
+static unsigned int lut_index[NO_OS_ARRAY_SIZE(adc_demo_channels)];
 
-unsigned int iio_adc_hal_num_channels(void)
+static int adc_demo_init(void)
 {
-	return NUM_CHANNELS;
+	unsigned int i;
+
+	for (i = 0; i < NO_OS_ARRAY_SIZE(adc_demo_channels); i++)
+		lut_index[i] = 0;
+
+	return 0;
 }
 
-const char *iio_adc_hal_channel_id(unsigned int channel)
+static int adc_demo_read_raw(unsigned int channel, int *value)
 {
-	if (channel >= NUM_CHANNELS)
-		return NULL;
-
-	return channel_ids[channel];
-}
-
-unsigned int iio_adc_hal_resolution_bits(void)
-{
-	return 16;
-}
-
-int iio_adc_hal_ref_voltage_mv(void)
-{
-	return 2500;
-}
-
-int iio_adc_hal_read_raw(unsigned int channel, int *value)
-{
-	if (channel >= NUM_CHANNELS)
+	if (channel >= NO_OS_ARRAY_SIZE(adc_demo_channels))
 		return -EINVAL;
 
 	*value = sine_lut[lut_index[channel]];
@@ -59,12 +45,11 @@ int iio_adc_hal_read_raw(unsigned int channel, int *value)
 	return 0;
 }
 
-int iio_adc_hal_init(void)
-{
-	unsigned int i;
-
-	for (i = 0; i < NUM_CHANNELS; i++)
-		lut_index[i] = 0;
-
-	return 0;
-}
+const struct iio_adc_hal iio_adc_hal = {
+	.channels        = adc_demo_channels,
+	.num_channels    = NO_OS_ARRAY_SIZE(adc_demo_channels),
+	.resolution_bits = 16,
+	.ref_voltage_mv  = 2500,
+	.init            = adc_demo_init,
+	.read_raw        = adc_demo_read_raw,
+};

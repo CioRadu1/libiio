@@ -240,12 +240,11 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 	unsigned int i;
 
 	ctx = iio_context_create_from_backend(params, &iio_external_backend,
-										  NOOS_BACKEND_VERSION, 1, 0, "v1.0");
+					      NOOS_BACKEND_VERSION, 1, 0, "v1.0");
 	if (iio_err(ctx))
 		return iio_err_cast(ctx);
 
-	for (i = 0; i < noos_iio_device_count; i++)
-	{
+	for (i = 0; i < noos_iio_device_count; i++) {
 		struct noos_iio_device_info *info = &noos_iio_devices[i];
 
 		snprintf(id, sizeof(id), "iio:device%u", i);
@@ -255,7 +254,7 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 			continue;
 
 		iio_device_set_pdata(iio_dev,
-							 (struct iio_device_pdata *)info);
+				     (struct iio_device_pdata *)info);
 
 		if (info->add_channels)
 			info->add_channels(info->dev, iio_dev);

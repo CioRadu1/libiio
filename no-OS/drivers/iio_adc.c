@@ -67,10 +67,10 @@ static int adc_lookup_str(const char *const *table, size_t count,
 
 static int adc_channel_index(const char *id)
 {
-	unsigned int i, n = iio_adc_hal_num_channels();
+	unsigned int i, n = iio_adc_hal.num_channels;
 
 	for (i = 0; i < n; i++) {
-		const char *cid = iio_adc_hal_channel_id(i);
+		const char *cid = iio_adc_hal.channels[i];
 
 		if (cid && strcmp(cid, id) == 0)
 			return (int)i;
@@ -105,7 +105,7 @@ static int iio_adc_read_samples(void *dev, void *data, size_t bytes)
 	int raw;
 
 	for (size_t i = 0; i < num_samples; i++) {
-		int ret = iio_adc_hal_read_raw(0, &raw);
+		int ret = iio_adc_hal.read_raw(0, &raw);
 
 		if (ret)
 			return ret;
@@ -118,11 +118,11 @@ static int iio_adc_read_samples(void *dev, void *data, size_t bytes)
 static int iio_adc_add_channels(void *dev, struct iio_device *iio_dev)
 {
 	struct iio_channel *ch;
-	unsigned int i, n = iio_adc_hal_num_channels();
+	unsigned int i, n = iio_adc_hal.num_channels;
 
 	for (i = 0; i < n; i++) {
 		ch = iio_device_add_channel(iio_dev, (long)i,
-					    iio_adc_hal_channel_id(i),
+					    iio_adc_hal.channels[i],
 					    NULL, NULL,
 					    false, true, &adc_fmt);
 		if (!ch)
@@ -161,7 +161,7 @@ static int iio_adc_read_attr(void *dev,
 
 	if (attr->type == IIO_ATTR_TYPE_DEVICE) {
 		if (strcmp(attr_name, "internal_ref_voltage") == 0) {
-			vals[0] = iio_adc_hal_ref_voltage_mv();
+			vals[0] = iio_adc_hal.ref_voltage_mv;
 			ret = iio_format_value(dst, len, IIO_VAL_INT, 1, vals);
 			return (ret < 0) ? ret : ret + 1;
 		}
@@ -188,7 +188,7 @@ static int iio_adc_read_attr(void *dev,
 	}
 
 	if (strcmp(attr_name, "raw") == 0) {
-		ret = iio_adc_hal_read_raw((unsigned int)idx, &raw_value);
+		ret = iio_adc_hal.read_raw((unsigned int)idx, &raw_value);
 		if (ret)
 			return ret;
 
@@ -214,7 +214,7 @@ static int iio_adc_read_attr(void *dev,
 	if (strcmp(attr_name, "process") == 0) {
 		int64_t scale_uv;
 
-		ret = iio_adc_hal_read_raw((unsigned int)idx, &raw_value);
+		ret = iio_adc_hal.read_raw((unsigned int)idx, &raw_value);
 		if (ret)
 			return ret;
 
@@ -342,11 +342,11 @@ int iio_adc_init(void)
 {
 	int ret;
 
-	ret = iio_adc_hal_init();
+	ret = iio_adc_hal.init();
 	if (ret)
 		return ret;
 
-	adc_fmt.bits = iio_adc_hal_resolution_bits();
+	adc_fmt.bits = iio_adc_hal.resolution_bits;
 
 	iio_adc_state_init();
 
