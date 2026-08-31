@@ -241,9 +241,19 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 
 			buf = iio_device_add_buffer(iio_dev, 0);
 			if (buf) {
+				unsigned int c, nb_channels;
+
 				iio_buffer_set_direction(buf,
 							info->direction ? "out" : "in");
 				iio_buffer_add_attr(buf, "length");
+				nb_channels = iio_device_get_channels_count(iio_dev);
+				for (c = 0; c < nb_channels; c++) {
+					struct iio_channel *chn =
+						iio_device_get_channel(iio_dev, c);
+
+					if (chn && iio_channel_is_scan_element(chn))
+						iio_buffer_add_scan_element(buf, chn, NULL);
+				}
 			}
 		}
 	}
