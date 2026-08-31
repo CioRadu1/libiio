@@ -14,7 +14,6 @@
 
 #include "mxc_sys.h"
 #include "mxc_errors.h"
-#include "mcr_regs.h"
 #include "usb.h"
 #include "usb_event.h"
 #include "enumerate.h"
@@ -89,11 +88,26 @@ static __attribute__((aligned(4))) uint8_t str_mfg[] = {
 	'D', 0, 'e', 0, 'v', 0, 'i', 0, 'c', 0, 'e', 0, 's', 0,
 };
 
-static __attribute__((aligned(4))) uint8_t str_prod[] = {
-	0x1A, 0x03,
-	'M', 0, 'A', 0, 'X', 0, '3', 0, '2', 0, '6', 0, '9', 0, '0', 0,
-	' ', 0, 'I', 0, 'I', 0, 'O', 0,
-};
+#ifndef NO_OS_USB_PRODUCT
+#define NO_OS_USB_PRODUCT	"IIO"
+#endif
+
+static __attribute__((aligned(4))) uint8_t
+str_prod[2 + 2 * (sizeof(NO_OS_USB_PRODUCT) - 1)];
+
+static void usb_init_prod_str(void)
+{
+	static const char prod[] = NO_OS_USB_PRODUCT;
+	unsigned int i;
+
+	str_prod[0] = sizeof(str_prod);
+	str_prod[1] = 0x03;
+
+	for (i = 0; i < sizeof(prod) - 1; i++) {
+		str_prod[2 + 2 * i] = (uint8_t)prod[i];
+		str_prod[3 + 2 * i] = 0;
+	}
+}
 
 static __attribute__((aligned(4))) uint8_t str_serial[] = {
 	0x14, 0x03,
@@ -167,22 +181,8 @@ static void usb_write_cb(void *cbdata)
 	write_complete = 1;
 }
 
-static int usb_startup_cb(void)
-{
-	MXC_SYS_ClockSourceEnable(MXC_SYS_CLOCK_IPO);
-	MXC_MCR->ldoctrl |= MXC_F_MCR_LDOCTRL_0P9EN;
-	MXC_SYS_ClockEnable(MXC_SYS_PERIPH_CLOCK_USB);
-	MXC_SYS_Reset_Periph(MXC_SYS_RESET0_USB);
-
-	return E_NO_ERROR;
-}
-
-static int usb_shutdown_cb(void)
-{
-	MXC_SYS_ClockDisable(MXC_SYS_PERIPH_CLOCK_USB);
-
-	return E_NO_ERROR;
-}
+int usbStartupCallback(void);
+int usbShutdownCallback(void);
 
 static void usb_cancel_pending(void)
 {
@@ -673,6 +673,8 @@ static int usb_hw_init(void)
 	maxusb_cfg_options_t opts;
 	int ret;
 
+	usb_init_prod_str();
+
 	configured = 0;
 	suspended = 0;
 	event_flags = 0;
@@ -680,8 +682,8 @@ static int usb_hw_init(void)
 
 	opts.enable_hs = 1;
 	opts.delay_us = delay_us;
-	opts.init_callback = usb_startup_cb;
-	opts.shutdown_callback = usb_shutdown_cb;
+	opts.init_callback = usbStartupCallback;
+	opts.shutdown_callback = usbShutdownCallback;
 
 	ret = MXC_USB_Init(&opts);
 	if (ret) {
