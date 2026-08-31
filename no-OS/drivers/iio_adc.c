@@ -26,8 +26,6 @@ static const char *const reference_values[] = {
 };
 #define REFERENCE_DEFAULT_IDX 4
 
-#define ADC_INTERNAL_REF_MV 1250
-
 struct adc_channel_state {
 	int scale_val;
 	int scale_val2;
@@ -94,9 +92,9 @@ static void iio_adc_state_init(void)
 	}
 }
 
-static const struct iio_data_format adc_fmt = {
+static struct iio_data_format adc_fmt = {
 	.length = 16,
-	.bits = 12,
+	.bits = 0,
 	.is_signed = false,
 };
 
@@ -111,7 +109,7 @@ static int iio_adc_read_samples(void *dev, void *data, size_t bytes)
 
 		if (ret)
 			return ret;
-		buffer[i] = raw & 0xFFF;
+		buffer[i] = raw & ((1u << adc_fmt.bits) - 1);
 	}
 
 	return 0;
@@ -163,7 +161,7 @@ static int iio_adc_read_attr(void *dev,
 
 	if (attr->type == IIO_ATTR_TYPE_DEVICE) {
 		if (strcmp(attr_name, "internal_ref_voltage") == 0) {
-			vals[0] = ADC_INTERNAL_REF_MV;
+			vals[0] = iio_adc_hal_ref_voltage_mv();
 			ret = iio_format_value(dst, len, IIO_VAL_INT, 1, vals);
 			return (ret < 0) ? ret : ret + 1;
 		}
@@ -347,6 +345,8 @@ int iio_adc_init(void)
 	ret = iio_adc_hal_init();
 	if (ret)
 		return ret;
+
+	adc_fmt.bits = iio_adc_hal_resolution_bits();
 
 	iio_adc_state_init();
 
