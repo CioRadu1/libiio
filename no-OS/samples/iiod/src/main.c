@@ -45,6 +45,7 @@ int main(void)
 		.size = NO_OS_UART_CS_8,
 		.parity = NO_OS_UART_PAR_NO,
 		.stop = NO_OS_UART_STOP_1_BIT,
+		.asynchronous_rx = true,
 #ifdef MAX32690
 		.platform_ops = &max_uart_ops,
 		.extra = &uart_extra,
@@ -127,8 +128,7 @@ int main(void)
 		ret = no_os_lwip_init(&lwip_desc, &lwip_param);
 		if (ret) {
 			pr_err("lwIP init failed: %d\n", ret);
-			no_os_uart_remove(uart_desc);
-			return ret;
+			goto cleanup;
 		}
 
 		ret = iiod_network_run(lwip_desc);
