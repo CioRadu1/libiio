@@ -22,17 +22,19 @@ extern "C" {
  * a generic void * instead of "const struct device *".
  */
 typedef int (*noos_iio_add_channels_t)(void *dev,
-				       struct iio_device *iio_device);
+		struct iio_device *iio_device);
 
 typedef int (*noos_iio_read_attr_t)(void *dev,
-				    const struct iio_device *iio_device,
-				    const struct iio_attr *attr,
-				    char *dst, size_t len);
+		const struct iio_device *iio_device,
+		const struct iio_attr *attr,
+		char *dst, size_t len);
 
 typedef int (*noos_iio_write_attr_t)(void *dev,
-				     const struct iio_device *iio_device,
-				     const struct iio_attr *attr,
-				     const char *src, size_t len);
+		const struct iio_device *iio_device,
+		const struct iio_attr *attr,
+		const char *src, size_t len);
+
+typedef int (*noos_iio_read_samples_t)(void *dev, void *data, size_t bytes);
 
 /**
  * struct noos_iio_device_info - describes one IIO device for the backend
@@ -48,6 +50,7 @@ struct noos_iio_device_info {
 	noos_iio_add_channels_t add_channels;
 	noos_iio_read_attr_t read_attr;
 	noos_iio_write_attr_t write_attr;
+	noos_iio_read_samples_t read_samples;
 };
 
 /**
