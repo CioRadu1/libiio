@@ -7,9 +7,29 @@ project(libiio-noos C ASM)
 # LIBIIO_DIR is now the parent directory (libiio root)
 set(LIBIIO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-if(NOT DEFINED NOOS_DIR)
-  message(FATAL_ERROR "NOOS_DIR must point to the no-OS root directory")
+if(NOT DEFINED NOOS_DIR AND DEFINED ENV{NOOS_DIR})
+  set(NOOS_DIR "$ENV{NOOS_DIR}" CACHE PATH "no-OS source tree")
 endif()
+
+if(NOT DEFINED NOOS_DIR)
+  foreach(candidate
+      "$ENV{HOME}/GitNo-OSPush/no-OS"
+      "$ENV{HOME}/no-OS"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../no-OS")
+    if(EXISTS "${candidate}/include/no_os_uart.h")
+      set(NOOS_DIR "${candidate}" CACHE PATH "no-OS source tree")
+      break()
+    endif()
+  endforeach()
+endif()
+
+if(NOT NOOS_DIR OR NOT EXISTS "${NOOS_DIR}/include/no_os_uart.h")
+  message(FATAL_ERROR
+    "no-OS source tree not found. Pass -DNOOS_DIR=/path/to/no-OS "
+    "or export NOOS_DIR in your shell.")
+endif()
+
+message(STATUS "NOOS_DIR = ${NOOS_DIR}")
 
 # ---------- libiio core sources ----------
 set(LIBIIO_SRCS
@@ -287,6 +307,45 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     COMMAND ${CMAKE_SIZE} $<TARGET_FILE:libiio-noos>
     COMMENT "Generating .bin and .hex"
   )
+
+  # --- Flash: OpenOCD, target config picked from ${BOARD} at configure time ---
+  find_program(OPENOCD openocd
+    HINTS
+      "$ENV{MAXIM_PATH}/Tools/OpenOCD"
+      "$ENV{HOME}/MaximSDK/Tools/OpenOCD"
+    DOC "OpenOCD executable used by the flash target"
+  )
+
+  set(FLASH_ERROR "")
+  if(NOT OPENOCD)
+    set(FLASH_ERROR "OpenOCD not found. Set MAXIM_PATH to your MaximSDK root.")
+  else()
+    get_filename_component(OPENOCD_BIN_DIR ${OPENOCD} DIRECTORY)
+    set(OPENOCD_SCRIPTS ${OPENOCD_BIN_DIR}/scripts)
+    if(NOT EXISTS ${OPENOCD_SCRIPTS}/target/${BOARD}.cfg)
+      set(FLASH_ERROR "no OpenOCD target config for board '${BOARD}' in ${OPENOCD_SCRIPTS}/target")
+    endif()
+  endif()
+
+  if(FLASH_ERROR)
+    add_custom_target(flash
+      COMMAND ${CMAKE_COMMAND} -E echo "ERROR: ${FLASH_ERROR}"
+      COMMAND ${CMAKE_COMMAND} -E false
+      VERBATIM
+    )
+  else()
+    add_custom_target(flash
+      COMMAND ${OPENOCD} -s ${OPENOCD_SCRIPTS}
+              -f interface/cmsis-dap.cfg
+              -f target/${BOARD}.cfg
+              -c "program libiio-noos.hex verify reset exit"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+      COMMENT "Flashing libiio-noos.hex to ${BOARD}"
+      USES_TERMINAL
+      VERBATIM
+    )
+    add_dependencies(flash libiio-noos)
+  endif()
 
 ###############################################################################
 # Host / native build (for development / testing)

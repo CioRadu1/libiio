@@ -1,0 +1,128 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "arm",
+      "hidden": true,
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake"
+    },
+    {
+      "name": "uart",
+      "displayName": "UART transport",
+      "inherits": "arm",
+      "binaryDir": "${sourceDir}/build-uart",
+      "cacheVariables": {
+        "WITH_IIOD_UART": "ON",
+        "WITH_IIOD_NETWORK": "OFF",
+        "WITH_IIOD_USB": "OFF",
+        "WITH_LWIP_NETWORKING": "OFF"
+      }
+    },
+    {
+      "name": "network",
+      "displayName": "lwIP network transport",
+      "inherits": "arm",
+      "binaryDir": "${sourceDir}/build-network",
+      "cacheVariables": {
+        "WITH_IIOD_UART": "OFF",
+        "WITH_IIOD_NETWORK": "ON",
+        "WITH_IIOD_USB": "OFF",
+        "WITH_LWIP_NETWORKING": "ON"
+      }
+    },
+    {
+      "name": "usb",
+      "displayName": "USB CDC-ACM transport",
+      "inherits": "arm",
+      "binaryDir": "${sourceDir}/build-usb",
+      "cacheVariables": {
+        "WITH_IIOD_UART": "OFF",
+        "WITH_IIOD_NETWORK": "OFF",
+        "WITH_IIOD_USB": "ON",
+        "WITH_LWIP_NETWORKING": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "uart",
+      "configurePreset": "uart"
+    },
+    {
+      "name": "network",
+      "configurePreset": "network"
+    },
+    {
+      "name": "usb",
+      "configurePreset": "usb"
+    },
+    {
+      "name": "flash-uart",
+      "configurePreset": "uart",
+      "targets": [ "flash" ]
+    },
+    {
+      "name": "flash-network",
+      "configurePreset": "network",
+      "targets": [ "flash" ]
+    },
+    {
+      "name": "flash-usb",
+      "configurePreset": "usb",
+      "targets": [ "flash" ]
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "uart",
+      "steps": [
+        { "type": "configure", "name": "uart" },
+        { "type": "build", "name": "uart" }
+      ]
+    },
+    {
+      "name": "network",
+      "steps": [
+        { "type": "configure", "name": "network" },
+        { "type": "build", "name": "network" }
+      ]
+    },
+    {
+      "name": "usb",
+      "steps": [
+        { "type": "configure", "name": "usb" },
+        { "type": "build", "name": "usb" }
+      ]
+    },
+    {
+      "name": "flash-uart",
+      "steps": [
+        { "type": "configure", "name": "uart" },
+        { "type": "build", "name": "uart" },
+        { "type": "build", "name": "flash-uart" }
+      ]
+    },
+    {
+      "name": "flash-network",
+      "steps": [
+        { "type": "configure", "name": "network" },
+        { "type": "build", "name": "network" },
+        { "type": "build", "name": "flash-network" }
+      ]
+    },
+    {
+      "name": "flash-usb",
+      "steps": [
+        { "type": "configure", "name": "usb" },
+        { "type": "build", "name": "usb" },
+        { "type": "build", "name": "flash-usb" }
+      ]
+    }
+  ]
+}
