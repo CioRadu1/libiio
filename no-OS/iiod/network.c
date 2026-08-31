@@ -10,9 +10,16 @@
 #include <errno.h>
 #include <no_os_print_log.h>
 #include <no_os_delay.h>
+#include <no_os_spi.h>
+#include <no_os_gpio.h>
 #include <tinyiiod/tinyiiod.h>
 #include "lwip_socket.h"
+#include "lwip_adin1110.h"
+#include "adin1110.h"
 #include "tcp_socket.h"
+#include "parameters.h"
+#include "iio_adc.h"
+#include "iio_device.h"
 
 #define IIOD_PORT 30431
 #define MAX_CLIENTS 4
@@ -30,7 +37,6 @@ struct net_server {
 };
 
 static struct net_server g_server;
-static unsigned int net_nesting_depth;
 
 struct iiod_net_pdata {
 	struct tcp_socket_desc *client;
@@ -46,46 +52,6 @@ static void net_drain(struct lwip_network_desc *lwip)
 {
 	no_os_mdelay(POST_DISCONNECT_DELAY_MS);
 	no_os_lwip_step(lwip, NULL);
-}
-
-static void net_accept_new(struct net_server *srv)
-{
-	struct tcp_socket_desc *new_client;
-	struct iiod_net_pdata np;
-	int ret;
-
-	if (srv->active_count >= MAX_CLIENTS)
-		return;
-
-	if (net_nesting_depth >= MAX_CLIENTS)
-		return;
-
-	ret = socket_accept(srv->server_socket, &new_client);
-	if (ret)
-		return;
-
-	pr_info("IIOD: client %u connected\n", srv->active_count + 1);
-
-	np.client = new_client;
-	np.lwip = srv->lwip;
-	np.server = srv;
-
-	srv->active_count++;
-	net_nesting_depth++;
-
-	ret = iiod_interpreter(srv->ctx, (struct iiod_pdata *)&np,
-			       iiod_net_read, iiod_net_write,
-			       srv->xml, srv->xml_len);
-
-	net_nesting_depth--;
-
-	pr_info("IIOD: client disconnected (%d), %u remaining\n",
-		ret, srv->active_count - 1);
-
-	socket_remove(new_client);
-	srv->active_count--;
-
-	net_drain(srv->lwip);
 }
 
 static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
@@ -117,9 +83,6 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 			if (now.s > deadline.s ||
 			    (now.s == deadline.s && now.us >= deadline.us))
 				return -ETIMEDOUT;
-
-			if (np->server)
-				net_accept_new(np->server);
 		} else {
 			return -EIO;
 		}
@@ -268,6 +231,67 @@ err_server:
 err_ctx:
 	iio_context_destroy(ctx);
 	iiod_cleanup();
+	return ret;
+}
+
+int noos_iiod_run(void)
+{
+	struct lwip_network_desc *lwip_desc;
+	uint8_t mac[6] = ADIN_MAC;
+	struct noos_iio_device_info adc_info;
+	int ret;
+
+	struct no_os_gpio_init_param adin_rst_gpio = {
+		.port = ADIN_RST_GPIO_PORT,
+		.number = ADIN_RST_GPIO_NUM,
+		.pull = NO_OS_PULL_NONE,
+		.platform_ops = ADIN_GPIO_OPS,
+		.extra = ADIN_GPIO_EXTRA,
+	};
+	struct no_os_spi_init_param adin_spi = {
+		.device_id = ADIN_SPI_DEVICE_ID,
+		.max_speed_hz = ADIN_SPI_SPEED,
+		.bit_order = NO_OS_SPI_BIT_ORDER_MSB_FIRST,
+		.mode = NO_OS_SPI_MODE_0,
+		.platform_ops = ADIN_SPI_OPS,
+		.chip_select = ADIN_SPI_CS,
+		.extra = ADIN_SPI_EXTRA,
+	};
+	struct adin1110_init_param adin_ip = {
+		.chip_type = ADIN1110,
+		.comm_param = adin_spi,
+		.reset_param = adin_rst_gpio,
+		.append_crc = true,
+	};
+	struct lwip_network_param lwip_param = {
+		.platform_ops = &adin1110_lwip_ops,
+		.mac_param = &adin_ip,
+	};
+
+	ret = iio_adc_init();
+	if (ret)
+		return ret;
+
+	ret = iio_adc_get_device_info(&adc_info);
+	if (ret)
+		return ret;
+
+	ret = noos_iio_register_device(&adc_info);
+	if (ret)
+		return ret;
+
+	memcpy(adin_ip.mac_address, mac, 6);
+	memcpy(lwip_param.hwaddr, mac, 6);
+
+	ret = no_os_lwip_init(&lwip_desc, &lwip_param);
+	if (ret) {
+		pr_err("lwIP init failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = iiod_network_run(lwip_desc);
+	no_os_lwip_remove(lwip_desc);
+
 	return ret;
 }
 
