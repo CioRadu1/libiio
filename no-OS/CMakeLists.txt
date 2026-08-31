@@ -262,8 +262,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     ${LWIP_DIR}/src/include
     ${LWIP_DIR}/src/include/compat
     ${LWIP_DIR}/src/include/netif
-    ${NOOS_DIR}/libraries/lwip/configs
-    ${NOOS_DIR}/libraries/lwip
+    ${NOOS_DIR}/libraries/lwip-glue/configs
+    ${NOOS_DIR}/libraries/lwip-glue
     ${NOOS_DIR}/network/lwip_raw_socket
   )
 
@@ -283,11 +283,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
   if(WITH_LWIP_NETWORKING)
     target_compile_definitions(libiio-noos PRIVATE
       NO_OS_LWIP_NETWORKING
-      NO_OS_STATIC_IP
       LWIP_PROVIDE_ERRNO
-      NO_OS_IP="${NO_OS_IP}"
-      NO_OS_NETMASK="${NO_OS_NETMASK}"
-      NO_OS_GATEWAY="${NO_OS_GATEWAY}"
+      CONFIG_NO_OS_IP="${NO_OS_IP}"
+      CONFIG_NO_OS_NETMASK="${NO_OS_NETMASK}"
+      CONFIG_NO_OS_GATEWAY="${NO_OS_GATEWAY}"
       NETDEV_HEADER="${NET_CHIP_HEADER}"
     )
   endif()
