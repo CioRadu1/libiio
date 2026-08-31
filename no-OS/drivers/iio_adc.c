@@ -26,7 +26,6 @@ static const struct adc_channel_map channel_map[] = {
 
 static char scale_values[NUM_CHANNELS][32] = { "1" };
 
-/* Timeout for ADC conversion polling (~10 ms at 100 MHz) */
 #define ADC_POLL_TIMEOUT	1000000
 
 static int adc_read_raw(mxc_adc_chsel_t channel, bool is_temp, int *value)
@@ -206,10 +205,28 @@ static int iio_adc_write_attr(void *dev,
 			continue;
 
 		if (strcmp(attr_name, "scale") == 0) {
-			if (len >= sizeof(scale_values[i]))
+			size_t j, vlen = len;
+			bool has_dot = false;
+
+			while (vlen > 0 && (src[vlen - 1] == '\n' ||
+					    src[vlen - 1] == '\0'))
+				vlen--;
+
+			if (vlen == 0 || len >= sizeof(scale_values[i]))
 				return -EINVAL;
-			memcpy(scale_values[i], src, len);
-			scale_values[i][len] = '\0';
+			for (j = 0; j < vlen; j++) {
+				if (src[j] == '.') {
+					if (has_dot || j == 0 || j == vlen - 1)
+						return -EINVAL;
+					has_dot = true;
+				} else if (src[j] < '0' || src[j] > '9') {
+					return -EINVAL;
+				}
+			}
+			if (src[0] == '0' && vlen > 1 && src[1] != '.')
+				return -EINVAL;
+			memcpy(scale_values[i], src, vlen);
+			scale_values[i][vlen] = '\0';
 			return len;
 		}
 
@@ -243,6 +260,7 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 
 	info->name = "max32690-adc";
 	info->dev = NULL;
+	info->direction = 0;
 	info->add_channels = iio_adc_add_channels;
 	info->read_attr = iio_adc_read_attr;
 	info->write_attr = iio_adc_write_attr;
