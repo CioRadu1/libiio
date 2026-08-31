@@ -58,12 +58,6 @@ static void noos_cancel_buffer(struct iio_buffer_pdata *pdata)
 {
 }
 
-/*
- * readbuf – called by the core task worker (iio_block_io → iio_block_read)
- * when the responder enqueues a block for reading.  With NO_THREADS=1 the
- * task processes inline, so this runs synchronously within the
- * handle_transfer_block → buffer_enqueue_block → iio_block_enqueue chain.
- */
 static ssize_t noos_readbuf(struct iio_buffer_pdata *pdata,
 			    void *dst, size_t len)
 {
@@ -78,6 +72,26 @@ static ssize_t noos_readbuf(struct iio_buffer_pdata *pdata,
 		return -ENOSYS;
 
 	ret = info->read_samples(info->dev, dst, len);
+	if (ret)
+		return ret;
+
+	return (ssize_t)len;
+}
+
+static ssize_t noos_writebuf(struct iio_buffer_pdata *pdata,
+			     const void *src, size_t len)
+{
+	struct noos_iio_device_info *info;
+	int ret;
+
+	if (!pdata || !pdata->dev)
+		return -EINVAL;
+
+	info = (struct noos_iio_device_info *)iio_device_get_pdata(pdata->dev);
+	if (!info || !info->write_samples)
+		return -ENOSYS;
+
+	ret = info->write_samples(info->dev, src, len);
 	if (ret)
 		return ret;
 
@@ -118,11 +132,23 @@ static int noos_enqueue_block(struct iio_block_pdata *pdata,
 
 	info = (struct noos_iio_device_info *)
 		iio_device_get_pdata(pdata->buf->dev);
-	if (!info || !info->read_samples)
+	if (!info)
 		return -ENOSYS;
 
 	pdata->bytes_used = bytes_used;
-	pdata->error = info->read_samples(info->dev, pdata->data, bytes_used);
+
+	if (info->direction) {
+		if (!info->write_samples)
+			return -ENOSYS;
+		pdata->error = info->write_samples(info->dev,
+						   pdata->data, bytes_used);
+	} else {
+		if (!info->read_samples)
+			return -ENOSYS;
+		pdata->error = info->read_samples(info->dev,
+						  pdata->data, bytes_used);
+	}
+
 	return 0;
 }
 
@@ -214,8 +240,11 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 			struct iio_buffer *buf;
 
 			buf = iio_device_add_buffer(iio_dev, 0);
-			if (buf)
+			if (buf) {
+				iio_buffer_set_direction(buf,
+							info->direction ? "out" : "in");
 				iio_buffer_add_attr(buf, "length");
+			}
 		}
 	}
 
@@ -234,6 +263,7 @@ static const struct iio_backend_ops noos_ops = {
 	.cancel_buffer = noos_cancel_buffer,
 
 	.readbuf = noos_readbuf,
+	.writebuf = noos_writebuf,
 
 	.create_block = noos_create_block,
 	.free_block = noos_free_block,
