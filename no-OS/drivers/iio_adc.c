@@ -405,6 +405,7 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 	info->read_attr = iio_adc_read_attr;
 	info->write_attr = iio_adc_write_attr;
 	info->read_samples = iio_adc_read_samples;
+	info->write_samples = NULL;
 	info->reg_read = iio_adc_reg_read;
 	info->reg_write = iio_adc_reg_write;
 
