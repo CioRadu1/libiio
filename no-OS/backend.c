@@ -159,6 +159,9 @@ static int noos_dequeue_block(struct iio_block_pdata *pdata, bool nonblock)
 
 int noos_iio_register_device(const struct noos_iio_device_info *info)
 {
+	if (!info)
+		return -EINVAL;
+
 	if (noos_iio_device_count >= NOOS_IIO_MAX_DEVICES)
 		return -ENOMEM;
 

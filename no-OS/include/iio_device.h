@@ -72,7 +72,8 @@ struct noos_iio_device_info {
  * noos_iio_register_device() - register an IIO device before context creation
  * @info: pointer to a device info structure (contents are copied)
  *
- * Returns 0 on success, -ENOMEM if the device table is full.
+ * Returns 0 on success, -EINVAL if @info is NULL, -ENOMEM if the device
+ * table is full.
  */
 int noos_iio_register_device(const struct noos_iio_device_info *info);
 
