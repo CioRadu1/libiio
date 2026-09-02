@@ -368,4 +368,11 @@ else()
 
   target_compile_options(libiio-noos PRIVATE -Wall)
 
+  option(WITH_TESTS "Build the no-OS libiio API tests" OFF)
+
+  if(WITH_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+  endif()
+
 endif()
