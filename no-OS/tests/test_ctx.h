@@ -9,11 +9,32 @@
 
 #include <iio/iio.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static inline void test_log(const char *tag, const char *fmt, ...)
+{
+	va_list ap;
+
+	printf("    %-5s", tag);
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+	putchar('\n');
+	fflush(stdout);
+}
+
+#ifdef TESTS_DEBUG
+#define TEST_IN(...)	test_log("in:", __VA_ARGS__)
+#define TEST_OUT(...)	test_log("out:", __VA_ARGS__)
+#else
+#define TEST_IN(...)	do { if (0) test_log("in:", __VA_ARGS__); } while (0)
+#define TEST_OUT(...)	do { if (0) test_log("out:", __VA_ARGS__); } while (0)
+#endif
 
 #define TEST_INT_EQ(actual, expected, message)				\
 	do {								\

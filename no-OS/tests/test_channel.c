@@ -29,6 +29,11 @@ TEST_FUNCTION(channel_identity)
 		snprintf(expected, sizeof(expected), "voltage%u", i);
 		id = iio_channel_get_id(chn);
 
+		TEST_IN("channel index %u, expecting id \"%s\"", i, expected);
+		TEST_OUT("id = \"%s\", output = %d, scan_element = %d, type = %d",
+			 id ? id : "(null)", iio_channel_is_output(chn),
+			 iio_channel_is_scan_element(chn),
+			 iio_channel_get_type(chn));
 		TEST_ASSERT_PTR_NOT_NULL(id, "channel has an id");
 		if (id)
 			TEST_STR_EQ(id, expected, "channel id");
@@ -51,6 +56,13 @@ TEST_FUNCTION(channel_lookup)
 	struct iio_context *ctx = test_ctx_require();
 	struct iio_device *dev = test_dev_require(ctx);
 
+	TEST_IN("lookups: (\"voltage0\", input), (\"voltage0\", output), "
+		"(\"voltage99\", input)");
+	TEST_OUT("results = %p, %p, %p; channel 0 = %p",
+		 (void *)iio_device_find_channel(dev, "voltage0", false),
+		 (void *)iio_device_find_channel(dev, "voltage0", true),
+		 (void *)iio_device_find_channel(dev, "voltage99", false),
+		 (void *)iio_device_get_channel(dev, 0));
 	TEST_ASSERT(iio_device_find_channel(dev, "voltage0", false) ==
 		    iio_device_get_channel(dev, 0),
 		    "find_channel locates voltage0 as an input");
@@ -74,6 +86,7 @@ TEST_FUNCTION(channel_attrs)
 		return;
 	}
 
+	TEST_OUT("attrs_count = %u", iio_channel_get_attrs_count(chn));
 	TEST_LONG_EQ(iio_channel_get_attrs_count(chn),
 		       sizeof(expected_chan_attrs) /
 		       sizeof(expected_chan_attrs[0]),
@@ -84,6 +97,8 @@ TEST_FUNCTION(channel_attrs)
 		const struct iio_attr *attr =
 			iio_channel_find_attr(chn, expected_chan_attrs[i]);
 
+		TEST_IN("find_attr(\"%s\")", expected_chan_attrs[i]);
+		TEST_OUT("attr = %p", (void *)attr);
 		TEST_ASSERT_PTR_NOT_NULL(attr, expected_chan_attrs[i]);
 	}
 
@@ -111,6 +126,9 @@ TEST_FUNCTION(channel_data_format)
 		if (!fmt)
 			continue;
 
+		TEST_IN("channel index %u", i);
+		TEST_OUT("length = %u, bits = %u, shift = %u, signed = %d",
+			 fmt->length, fmt->bits, fmt->shift, fmt->is_signed);
 		TEST_LONG_EQ(fmt->length, 16, "storage length is 16 bits");
 		TEST_ASSERT(!fmt->is_signed, "samples are unsigned");
 		TEST_ASSERT(fmt->bits >= 8 && fmt->bits <= 16,
@@ -136,6 +154,9 @@ TEST_FUNCTION(channel_sample_size)
 	}
 
 	iio_channel_enable(chn, mask);
+	TEST_IN("mask sized %u, channel 0 enabled",
+		iio_device_get_channels_count(dev));
+	TEST_OUT("sample_size = %zd", iio_device_get_sample_size(dev, mask));
 	TEST_LONG_EQ(iio_device_get_sample_size(dev, mask), 2,
 		       "one enabled channel is two bytes per sample");
 

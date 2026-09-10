@@ -11,6 +11,8 @@ TEST_FUNCTION(context_create)
 {
 	struct iio_context *ctx = test_ctx_create();
 
+	TEST_IN("uri = %s", test_ctx_label());
+	TEST_OUT("iio_create_context() err = %d", iio_err(ctx));
 	TEST_INT_EQ(iio_err(ctx), 0, "context created without error");
 	if (iio_err(ctx))
 		return;
@@ -24,6 +26,8 @@ TEST_FUNCTION(context_identity)
 	const char *name = iio_context_get_name(ctx);
 	const char *descr = iio_context_get_description(ctx);
 
+	TEST_OUT("name = \"%s\"", name ? name : "(null)");
+	TEST_OUT("description = \"%s\"", descr ? descr : "(null)");
 	TEST_ASSERT_PTR_NOT_NULL(name, "context has a name");
 	if (name)
 		TEST_ASSERT(name[0] != '\0',
@@ -40,7 +44,11 @@ TEST_FUNCTION(context_identity)
 TEST_FUNCTION(context_version)
 {
 	struct iio_context *ctx = test_ctx_require();
+	const char *tag = iio_context_get_version_tag(ctx);
 
+	TEST_OUT("version = %u.%u tag \"%s\"",
+		 iio_context_get_version_major(ctx),
+		 iio_context_get_version_minor(ctx), tag ? tag : "(null)");
 	TEST_LONG_EQ(iio_context_get_version_major(ctx), 1,
 		       "version major is 1");
 	TEST_LONG_EQ(iio_context_get_version_minor(ctx), 0,
@@ -55,6 +63,7 @@ TEST_FUNCTION(context_device_count)
 {
 	struct iio_context *ctx = test_ctx_require();
 
+	TEST_OUT("devices_count = %u", iio_context_get_devices_count(ctx));
 	TEST_LONG_EQ(iio_context_get_devices_count(ctx), 1,
 		       "context holds exactly one device");
 
@@ -69,12 +78,16 @@ TEST_FUNCTION(context_recreate)
 
 	iio_context_destroy(first);
 
+	TEST_IN("first context saw %u device(s), destroyed, creating again", count);
 	second = test_ctx_create();
+	TEST_OUT("second context err = %d", iio_err(second));
 	TEST_INT_EQ(iio_err(second), 0,
 			      "second context created after destroy");
 	if (iio_err(second))
 		return;
 
+	TEST_OUT("second devices_count = %u",
+		 iio_context_get_devices_count(second));
 	TEST_LONG_EQ(iio_context_get_devices_count(second), count,
 		       "second context sees the same device count");
 
@@ -86,6 +99,8 @@ TEST_FUNCTION(context_bad_uri)
 	struct iio_context *ctx = iio_create_context(&test_ctx_params,
 						     "no-such-backend:");
 
+	TEST_IN("uri = \"no-such-backend:\"");
+	TEST_OUT("err = %d", iio_err(ctx));
 	TEST_ASSERT(iio_err(ctx) < 0,
 		    "an unknown uri prefix is rejected with an error");
 	if (!iio_err(ctx))

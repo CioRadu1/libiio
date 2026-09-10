@@ -18,7 +18,10 @@ static int read_str(struct iio_channel *chn, const char *name, char *dst,
 	if (!attr)
 		return -ENOENT;
 
+	TEST_IN("read \"%s\" into %zu bytes", name, len);
 	ret = iio_attr_read_raw(attr, dst, len);
+	TEST_OUT("read \"%s\" -> ret %zd, value \"%s\"", name, ret,
+		 ret > 0 ? dst : "");
 	if (ret < 0)
 		return (int)ret;
 
@@ -29,11 +32,16 @@ static ssize_t write_str(struct iio_channel *chn, const char *name,
 			 const char *val)
 {
 	const struct iio_attr *attr = iio_channel_find_attr(chn, name);
+	ssize_t ret;
 
 	if (!attr)
 		return -ENOENT;
 
-	return iio_attr_write_string(attr, val);
+	TEST_IN("write \"%s\" = \"%s\"", name, val);
+	ret = iio_attr_write_string(attr, val);
+	TEST_OUT("write \"%s\" -> ret %zd", name, ret);
+
+	return ret;
 }
 
 TEST_FUNCTION(rw_gain_round_trip)
@@ -110,16 +118,20 @@ TEST_FUNCTION(rw_differential_round_trip)
 
 	attr = iio_channel_find_attr(chn, "differential");
 
+	TEST_IN("write \"differential\" = \"1\"");
 	TEST_ASSERT(iio_attr_write_string(attr, "1") > 0,
 		    "differential accepts 1");
 	TEST_INT_EQ(iio_attr_read_longlong(attr, &val), 0,
 			      "differential is readable after the write");
+	TEST_OUT("differential = %lld", val);
 	TEST_LONG_EQ(val, 1, "differential reads back 1");
 
+	TEST_IN("write \"differential\" = \"0\"");
 	TEST_ASSERT(iio_attr_write_string(attr, "0") > 0,
 		    "differential accepts 0");
 	TEST_INT_EQ(iio_attr_read_longlong(attr, &val), 0,
 			      "differential is readable after the restore");
+	TEST_OUT("differential = %lld", val);
 	TEST_LONG_EQ(val, 0, "differential reads back 0");
 
 	iio_context_destroy(ctx);
@@ -143,10 +155,12 @@ TEST_FUNCTION(rw_scale_round_trip)
 
 	TEST_INT_EQ(read_str(chn, "scale", before, sizeof(before)), 0,
 			      "scale is readable before the write");
+	TEST_IN("write \"scale\" = \"2.500000\"");
 	TEST_ASSERT(iio_attr_write_string(attr, "2.500000") > 0,
 		    "scale accepts 2.500000");
 	TEST_INT_EQ(iio_attr_read_double(attr, &val), 0,
 			      "scale is readable after the write");
+	TEST_OUT("scale = %f, accepted window 2.4999..2.5001", val);
 	TEST_ASSERT(val > 2.4999 && val < 2.5001,
 		    "scale round-trips through IIO_VAL_INT_PLUS_MICRO");
 
@@ -175,10 +189,12 @@ TEST_FUNCTION(rw_zero_scale_zeroes_process)
 
 	TEST_INT_EQ(read_str(chn, "scale", before, sizeof(before)), 0,
 			      "scale is readable before the write");
+	TEST_IN("write \"scale\" = \"0.000000\", then read \"process\"");
 	TEST_ASSERT(iio_attr_write_string(scale, "0.000000") > 0,
 		    "scale accepts zero");
 	TEST_INT_EQ(iio_attr_read_longlong(process, &val), 0,
 			      "process is readable with a zero scale");
+	TEST_OUT("process = %lld", val);
 	TEST_LONG_EQ(val, 0, "a zero scale yields a zero process value");
 
 	TEST_ASSERT(iio_attr_write_string(scale, before) > 0,
@@ -219,6 +235,7 @@ TEST_FUNCTION(rw_rejects_invalid_values)
 	TEST_STR_EQ(after, before,
 			      "a rejected reference write leaves the value alone");
 
+	TEST_IN("expecting -EINVAL (%d)", -EINVAL);
 	TEST_INT_EQ((int)write_str(chn, "differential", "2"), -EINVAL,
 			      "an out-of-range differential gives -EINVAL");
 
@@ -236,6 +253,7 @@ TEST_FUNCTION(rw_read_only_attrs)
 		return;
 	}
 
+	TEST_IN("expecting -EPERM (%d) for both", -EPERM);
 	TEST_INT_EQ((int)write_str(chn, "raw", "1234"), -EPERM,
 			      "writing raw gives -EPERM");
 	TEST_INT_EQ((int)write_str(chn, "process", "1234"), -EPERM,
@@ -255,6 +273,10 @@ TEST_FUNCTION(rw_unknown_attr)
 		return;
 	}
 
+	TEST_IN("find_attr(\"no_such_attr\") on the channel and the device");
+	TEST_OUT("channel = %p, device = %p",
+		 (void *)iio_channel_find_attr(chn, "no_such_attr"),
+		 (void *)iio_device_find_attr(dev, "no_such_attr"));
 	TEST_ASSERT_PTR_NULL(iio_channel_find_attr(chn, "no_such_attr"),
 			     "an unknown channel attribute is not found");
 	TEST_ASSERT_PTR_NULL(iio_device_find_attr(dev, "no_such_attr"),
@@ -280,6 +302,9 @@ TEST_FUNCTION(rw_unsupported_reference)
 				       sizeof(before)), 0,
 			      "reference is readable before the write");
 	ret = (int)write_str(chn, "reference", "VDD/2");
+	TEST_IN("expecting -ENOTSUP (%d) or newlib's (%d)", -ENOTSUP,
+		-NEWLIB_ENOTSUP);
+	TEST_OUT("ret = %d", ret);
 	TEST_ASSERT(ret == -ENOTSUP || ret == -NEWLIB_ENOTSUP,
 		    "a reference the hardware lacks is refused as unsupported");
 	TEST_INT_EQ(read_str(chn, "reference", after, sizeof(after)),
