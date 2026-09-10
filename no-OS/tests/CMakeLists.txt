@@ -1,42 +1,40 @@
 ###############################################################################
-# Unit tests for the no-OS libiio port
+# Hardware API tests for the no-OS libiio port
 ###############################################################################
 
 option(TESTS_DEBUG "Print per-assertion test output" ON)
 
-set(NOOS_TEST_INCLUDES
-  ${COMMON_INCLUDES}
-  ${LIBIIO_DIR}/tests/api
+set(NOOS_TEST_NAMES
+  test_context
+  test_device
+  test_channel
+  test_attr
+  test_rw
+  test_buffer
 )
 
-add_executable(test_val_noos
-  ${CMAKE_CURRENT_SOURCE_DIR}/test_val.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/../drivers/iio_val.c
-)
+set(NOOS_REMOTE_LIB ${LIBIIO_DIR}/build/libiio.so)
 
-add_executable(test_adc_noos
-  ${CMAKE_CURRENT_SOURCE_DIR}/test_adc.c
-  ${LIBIIO_SRCS}
-  ${CMAKE_CURRENT_SOURCE_DIR}/../backend.c
-  ${IIO_ADC_SRCS}
-)
+if(NOT EXISTS ${NOOS_REMOTE_LIB})
+  message(STATUS "no-OS tests: ${NOOS_REMOTE_LIB} not found, "
+                 "build libiio in ${LIBIIO_DIR}/build first")
+  return()
+endif()
 
-add_executable(test_backend_noos
-  ${CMAKE_CURRENT_SOURCE_DIR}/test_backend.c
-  ${LIBIIO_SRCS}
-  ${CMAKE_CURRENT_SOURCE_DIR}/../backend.c
-)
+foreach(name ${NOOS_TEST_NAMES})
+  add_executable(${name}_remote ${CMAKE_CURRENT_SOURCE_DIR}/${name}.c)
 
-foreach(target test_val_noos test_adc_noos test_backend_noos)
-  target_include_directories(${target} PRIVATE ${NOOS_TEST_INCLUDES})
-  target_compile_definitions(${target} PRIVATE ${COMMON_DEFS})
-  target_compile_options(${target} PRIVATE -Wall -Wextra
+  target_include_directories(${name}_remote PRIVATE
+    ${LIBIIO_DIR}/include
+    ${LIBIIO_DIR}/tests/api
+  )
+  target_link_libraries(${name}_remote PRIVATE ${NOOS_REMOTE_LIB})
+  set_target_properties(${name}_remote PROPERTIES
+                        BUILD_RPATH ${LIBIIO_DIR}/build)
+  target_compile_options(${name}_remote PRIVATE -Wall -Wextra
                          -Wno-unused-parameter)
 
   if(TESTS_DEBUG)
-    target_compile_definitions(${target} PRIVATE TESTS_DEBUG)
+    target_compile_definitions(${name}_remote PRIVATE TESTS_DEBUG)
   endif()
-
-  string(REPLACE "_noos" "" test_name ${target})
-  add_test(NAME ${test_name} COMMAND ${target})
 endforeach()
