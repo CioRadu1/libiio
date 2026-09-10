@@ -94,6 +94,11 @@ static bool stream_open(struct test_stream *s)
 		goto err;
 	}
 
+	TEST_IN("stream open: %u channel(s), channel 0 enabled, block of "
+		"%u samples", nb, TEST_SAMPLES);
+	TEST_OUT("stride = %zd bytes, block = %zd bytes", s->stride,
+		 (ssize_t)(TEST_SAMPLES * s->stride));
+
 	return true;
 
 err:
@@ -108,6 +113,7 @@ TEST_FUNCTION(buffer_registered)
 	struct iio_device *dev = test_dev_require(ctx);
 	struct iio_buffer *buf;
 
+	TEST_OUT("buffers_count = %u", iio_device_get_buffers_count(dev));
 	TEST_INT_EQ(iio_device_get_buffers_count(dev), 1,
 			      "the device has exactly one buffer");
 
@@ -115,6 +121,10 @@ TEST_FUNCTION(buffer_registered)
 	TEST_INT_EQ(iio_err(buf), 0, "buffer 0 is reachable");
 
 	if (!iio_err(buf)) {
+		TEST_OUT("is_output = %d, scan_elements = %u, channels = %u",
+			 iio_buffer_is_output(buf),
+			 iio_buffer_get_scan_elements_count(buf),
+			 iio_device_get_channels_count(dev));
 		TEST_ASSERT(!iio_buffer_is_output(buf),
 			    "the buffer is an input buffer");
 		TEST_ASSERT(iio_buffer_get_device(buf) == dev,
@@ -135,6 +145,7 @@ TEST_FUNCTION(buffer_stride)
 	if (!stream_open(&s))
 		return;
 
+	TEST_IN("one 16-bit channel enabled, expecting a 2-byte stride");
 	TEST_LONG_EQ(s.stride, 2,
 		       "one enabled 16-bit channel gives a 2-byte stride");
 
@@ -146,7 +157,7 @@ TEST_FUNCTION(buffer_transfer)
 	struct test_stream s;
 	long raw_max;
 	void *ptr, *end;
-	unsigned int count = 0;
+	unsigned int count = 0, first = 0, last = 0;
 	int ret;
 
 	if (!stream_open(&s))
@@ -154,7 +165,10 @@ TEST_FUNCTION(buffer_transfer)
 
 	raw_max = test_chan_raw_max(s.chn);
 
+	TEST_IN("capture %u samples, every value must be within 0..%ld",
+		TEST_SAMPLES, raw_max);
 	ret = iio_block_enqueue(s.block, 0, false);
+	TEST_OUT("enqueue ret = %d", ret);
 	TEST_INT_EQ(ret, 0, "the block enqueues");
 	if (ret) {
 		stream_close(&s);
@@ -162,6 +176,7 @@ TEST_FUNCTION(buffer_transfer)
 	}
 
 	ret = iio_block_dequeue(s.block, false);
+	TEST_OUT("dequeue ret = %d", ret);
 	TEST_ASSERT(ret >= 0, "the block dequeues");
 	if (ret < 0) {
 		stream_close(&s);
@@ -171,6 +186,8 @@ TEST_FUNCTION(buffer_transfer)
 	ptr = iio_block_first(s.block, s.chn);
 	end = iio_block_end(s.block);
 
+	TEST_OUT("first = %p, end = %p, span = %zd bytes", ptr, end,
+		 (ssize_t)((char *)end - (char *)ptr));
 	TEST_ASSERT_PTR_NOT_NULL(ptr, "the channel has a first sample");
 	TEST_ASSERT(ptr < end, "the block holds at least one sample");
 
@@ -178,6 +195,9 @@ TEST_FUNCTION(buffer_transfer)
 		uint16_t val;
 
 		memcpy(&val, ptr, sizeof(val));
+		if (!count)
+			first = val;
+		last = val;
 		if (val > raw_max) {
 			TEST_ASSERT(false,
 				    "every sample fits the channel resolution");
@@ -186,6 +206,8 @@ TEST_FUNCTION(buffer_transfer)
 		count++;
 	}
 
+	TEST_OUT("walked %u sample(s), first = %u, last = %u", count, first,
+		 last);
 	TEST_LONG_EQ(count, TEST_SAMPLES,
 		       "the block holds the requested sample count");
 
@@ -210,6 +232,7 @@ TEST_FUNCTION(buffer_channel_read)
 	}
 
 	ret = iio_block_dequeue(s.block, false);
+	TEST_OUT("enqueue/dequeue ret = %d", ret);
 	if (ret < 0) {
 		TEST_ASSERT(ret >= 0, "the block dequeues");
 		stream_close(&s);
@@ -220,6 +243,10 @@ TEST_FUNCTION(buffer_channel_read)
 	bytes = iio_channel_read(s.chn, s.block, samples, sizeof(samples),
 				 true);
 
+	TEST_IN("demux into %zu bytes", sizeof(samples));
+	TEST_OUT("iio_channel_read = %zu bytes, samples[0] = %u, [%u] = %u",
+		 bytes, samples[0], TEST_SAMPLES - 1,
+		 samples[TEST_SAMPLES - 1]);
 	TEST_LONG_EQ(bytes, sizeof(samples),
 		       "iio_channel_read demuxes the whole block");
 
@@ -238,6 +265,7 @@ TEST_FUNCTION(buffer_reopen)
 	if (!stream_open(&s))
 		return;
 
+	TEST_IN("second open of the same buffer");
 	TEST_INT_EQ(iio_block_enqueue(s.block, 0, false), 0,
 			      "the block enqueues after a reopen");
 	TEST_ASSERT(iio_block_dequeue(s.block, false) >= 0,
