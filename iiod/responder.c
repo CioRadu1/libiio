@@ -1350,6 +1350,23 @@ static void iiod_responder_free_resources(struct parser_pdata *pdata)
 	iio_mutex_unlock(evlist_lock);
 }
 
+struct iiod_responder *binary_parse_create(struct parser_pdata *pdata)
+{
+	return iiod_responder_create(&iiod_responder_ops, pdata);
+}
+
+int binary_parse_step(struct iiod_responder *responder)
+{
+	return iiod_responder_step(responder);
+}
+
+void binary_parse_destroy(struct iiod_responder *responder,
+			  struct parser_pdata *pdata)
+{
+	iiod_responder_free_resources(pdata);
+	iiod_responder_destroy(responder);
+}
+
 int binary_parse(struct parser_pdata *pdata)
 {
 	struct iiod_responder *responder;
@@ -1363,8 +1380,7 @@ int binary_parse(struct parser_pdata *pdata)
 	/* TODO: poll main thread pool FD */
 
 	iiod_responder_wait_done(responder);
-	iiod_responder_free_resources(pdata);
-	iiod_responder_destroy(responder);
+	binary_parse_destroy(responder, pdata);
 
 	return 0;
 }
