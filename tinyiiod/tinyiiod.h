@@ -48,6 +48,28 @@ int iiod_interpreter(struct iio_context *ctx, struct iiod_pdata *pdata,
 		ssize_t (*write_cb)(struct iiod_pdata *, const void *, size_t), const void *xml,
 		size_t xml_len);
 
+/* Non-blocking variant of iiod_interpreter(), for a single-threaded server that
+ * has to serve several clients at once. Instead of running the interpreter to
+ * completion, the caller drives one interpreter per client and rotates between
+ * them.
+ *
+ * This requires a read_cb that returns -EAGAIN when the bus has no data ready,
+ * rather than blocking. Everything else matches iiod_interpreter().
+ *
+ * iiod_interpreter_step() returns 1 if a command was handled, 0 if the bus had
+ * nothing to deliver, or a negative error code once the client is done; after a
+ * negative return the caller must still call iiod_interpreter_destroy().
+ */
+struct iiod_interp;
+
+struct iiod_interp *iiod_interpreter_create(struct iio_context *ctx,
+		struct iiod_pdata *pdata,
+		ssize_t (*read_cb)(struct iiod_pdata *, void *, size_t),
+		ssize_t (*write_cb)(struct iiod_pdata *, const void *, size_t),
+		const void *xml, size_t xml_len);
+int iiod_interpreter_step(struct iiod_interp *interp);
+void iiod_interpreter_destroy(struct iiod_interp *interp);
+
 /* When a blocking iio_backend_ops.read_ev() is called, and there is no event,
  * the callback is expected to return -EAGAIN; only then, when/if an event
  * eventually occurs, the application should call iiod_set_event() once to

@@ -146,6 +146,10 @@ int usb_detach_dmabuf(int ep_fd, int fd);
 int usb_transfer_dmabuf(int ep_fd, int fd, uint64_t size);
 
 int binary_parse(struct parser_pdata *pdata);
+struct iiod_responder *binary_parse_create(struct parser_pdata *pdata);
+int binary_parse_step(struct iiod_responder *responder);
+void binary_parse_destroy(struct iiod_responder *responder,
+			  struct parser_pdata *pdata);
 
 void enable_binary(struct parser_pdata *pdata);
 
