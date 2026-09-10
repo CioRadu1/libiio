@@ -78,6 +78,7 @@ struct iiod_responder {
 
 	bool thrd_stop;
 	int thrd_err_code;
+	int step_ret;
 	int timeout_ms;
 };
 
@@ -126,11 +127,15 @@ static void __iiod_io_cancel_unlocked(struct iiod_io *io)
 	}
 }
 
+#define IIOD_STALL_TIMEOUT_MS 5000
+
 static ssize_t iiod_rw_all(struct iiod_responder *priv, const struct iiod_buf *cmd_buf,
-		const struct iiod_buf *buf, size_t nb, size_t bytes, bool is_read)
+		const struct iiod_buf *buf, size_t nb, size_t bytes, bool is_read,
+		bool can_yield)
 {
 	ssize_t ret, count = 0;
 	struct iiod_buf bufs[32], *curr = &bufs[0];
+	uint64_t stall_start = 0;
 
 	if (cmd_buf)
 		nb++;
@@ -156,6 +161,22 @@ static ssize_t iiod_rw_all(struct iiod_responder *priv, const struct iiod_buf *c
 			ret = priv->ops->read(priv->d, curr, nb);
 		else
 			ret = priv->ops->write(priv->d, curr, nb);
+
+		if (ret == -EAGAIN) {
+			if (can_yield && count == 0)
+				return -EAGAIN;
+
+			if (!stall_start)
+				stall_start = read_counter_us();
+			else if (read_counter_us() - stall_start >
+				 IIOD_STALL_TIMEOUT_MS * 1000ull)
+				return -ETIMEDOUT;
+
+			continue;
+		}
+
+		stall_start = 0;
+
 		if (ret <= 0)
 			return ret;
 
@@ -197,7 +218,7 @@ int iiod_command_data_read(struct iiod_command_data *data, const struct iiod_buf
 	struct iiod_responder *priv = (struct iiod_responder *)data;
 	ssize_t ret;
 
-	ret = iiod_rw_all(priv, NULL, buf, 1, buf->size, true);
+	ret = iiod_rw_all(priv, NULL, buf, 1, buf->size, true, false);
 	if (ret < 0)
 		return (int)ret;
 	if (ret != buf->size)
@@ -233,101 +254,118 @@ static void iiod_responder_cancel_responses(struct iiod_responder *priv)
 	}
 }
 
-static int iiod_responder_reader_worker(struct iiod_responder *priv)
+enum iiod_step_res {
+	IIOD_STEP_OK,
+	IIOD_STEP_BLOCKED,
+	IIOD_STEP_DONE,
+};
+
+static enum iiod_step_res
+iiod_responder_do_step(struct iiod_responder *priv)
 {
 	struct iiod_command cmd;
 	struct iiod_buf cmd_buf, ok_buf;
 	struct iiod_io *io;
-	ssize_t ret = 0;
+	ssize_t ret;
 
 	cmd_buf.ptr = &cmd;
 	cmd_buf.size = sizeof(cmd);
 	ok_buf.ptr = "0\r\n";
 	ok_buf.size = 3;
 
-	iio_mutex_lock(priv->lock);
+	ret = iiod_rw_all(priv, NULL, &cmd_buf, 1, sizeof(cmd), true, true);
+	if (ret == -EAGAIN)
+		return IIOD_STEP_BLOCKED;
 
-	while (!priv->thrd_stop) {
-		iio_mutex_unlock(priv->lock);
+	if (ret == (ssize_t)sizeof(cmd) &&
+	    !strncmp((char *)&cmd, "BINARY\r\n", 8)) {
+		/* If we receive again the "BINARY\r\n" string, send a
+		 * return code of zero and continue as usual.
+		 * This can happen with the serial backend when the
+		 * client disconnects and a new client appears.
+		 * Conveniently, the string is exactly 8 bytes, which is
+		 * the size of a iio_command. */
 
-		ret = iiod_rw_all(priv, NULL, &cmd_buf, 1, sizeof(cmd), true);
-
-		if (!strncmp((char *)&cmd, "BINARY\r\n", 8)) {
-			/* If we receive again the "BINARY\r\n" string, send a
-			 * return code of zero and continue as usual.
-			 * This can happen with the serial backend when the
-			 * client disconnects and a new client appears.
-			 * Conveniently, the string is exactly 8 bytes, which is
-			 * the size of a iio_command. */
-
-			iiod_rw_all(priv, NULL, &ok_buf, 1, ok_buf.size, false);
-			continue;
-		}
-
-		iio_mutex_lock(priv->lock);
-		if (ret <= 0)
-			break;
-
-		if (cmd.op != IIOD_OP_RESPONSE) {
-			iio_mutex_unlock(priv->lock);
-
-			ret = iiod_run_command(priv, &cmd);
-
-			iio_mutex_lock(priv->lock);
-			if (ret < 0)
-				break;
-
-			continue;
-		}
-
-		/* Find the client for the given ID in the readers list */
-		for (io = priv->readers; io; io = io->r_next) {
-			if (io->client_id == cmd.client_id)
-				break;
-		}
-
-		if (!io) {
-			/* We received a response, but have no client waiting
-			 * for it, so drop it. A code <= 0 is a status code and
-			 * carries no payload, so there is nothing to discard. */
-			iio_mutex_unlock(priv->lock);
-			if (cmd.code > 0)
-				iiod_discard_data(priv, cmd.code);
-			iio_mutex_lock(priv->lock);
-			continue;
-		}
-
-		iiod_io_ref_unlocked(io);
-
-		/* Discard the entry from the readers list */
-		__iiod_io_cancel_unlocked(io);
-
-		iio_mutex_unlock(priv->lock);
-
-		if (io->r_io.nb_buf && cmd.code > 0) {
-			ret = iiod_rw_all(
-					priv, NULL, io->r_io.buf, io->r_io.nb_buf, cmd.code, true);
-
-			if (ret > 0 && (size_t)ret < (size_t)cmd.code)
-				iiod_discard_data(priv, cmd.code - ret);
-
-			iio_mutex_lock(priv->lock);
-
-			if (ret <= 0) {
-				iiod_responder_signal_io(io, (int32_t)ret);
-				iiod_io_unref_unlocked(io);
-				break;
-			}
-		} else {
-			iio_mutex_lock(priv->lock);
-		}
-
-		/* Wake up the reader */
-		iiod_responder_signal_io(io, cmd.code);
-		iiod_io_unref_unlocked(io);
+		iiod_rw_all(priv, NULL, &ok_buf, 1, ok_buf.size, false, false);
+		return IIOD_STEP_OK;
 	}
 
-	priv->thrd_err_code = priv->thrd_stop ? -EINTR : (int)ret;
+	if (ret <= 0) {
+		priv->step_ret = (int)ret;
+		return IIOD_STEP_DONE;
+	}
+
+	if (cmd.op != IIOD_OP_RESPONSE) {
+		ret = iiod_run_command(priv, &cmd);
+		if (ret < 0) {
+			priv->step_ret = (int)ret;
+			return IIOD_STEP_DONE;
+		}
+
+		return IIOD_STEP_OK;
+	}
+
+	iio_mutex_lock(priv->lock);
+
+	/* Find the client for the given ID in the readers list */
+	for (io = priv->readers; io; io = io->r_next) {
+		if (io->client_id == cmd.client_id)
+			break;
+	}
+
+	if (!io) {
+		/* We received a response, but have no client waiting for it,
+		 * so drop it. A code <= 0 is a status code and carries no
+		 * payload, so there is nothing to discard. */
+		iio_mutex_unlock(priv->lock);
+
+		if (cmd.code > 0)
+			iiod_discard_data(priv, cmd.code);
+
+		return IIOD_STEP_OK;
+	}
+
+	iiod_io_ref_unlocked(io);
+
+	/* Discard the entry from the readers list */
+	__iiod_io_cancel_unlocked(io);
+
+	iio_mutex_unlock(priv->lock);
+
+	if (io->r_io.nb_buf && cmd.code > 0) {
+		ret = iiod_rw_all(priv, NULL, io->r_io.buf, io->r_io.nb_buf,
+				  cmd.code, true, false);
+
+		if (ret > 0 && (size_t)ret < (size_t)cmd.code)
+			iiod_discard_data(priv, cmd.code - ret);
+
+		if (ret <= 0) {
+			iio_mutex_lock(priv->lock);
+			iiod_responder_signal_io(io, (int32_t)ret);
+			iiod_io_unref_unlocked(io);
+			iio_mutex_unlock(priv->lock);
+
+			priv->step_ret = (int)ret;
+			return IIOD_STEP_DONE;
+		}
+	}
+
+	iio_mutex_lock(priv->lock);
+
+	/* Wake up the reader */
+	iiod_responder_signal_io(io, cmd.code);
+	iiod_io_unref_unlocked(io);
+
+	iio_mutex_unlock(priv->lock);
+
+	return IIOD_STEP_OK;
+}
+
+static void iiod_responder_reader_finish(struct iiod_responder *priv)
+{
+	iio_mutex_lock(priv->lock);
+
+	priv->thrd_err_code = priv->thrd_stop ? -EINTR : priv->step_ret;
 	priv->thrd_stop = true;
 
 	iiod_responder_cancel_responses(priv);
@@ -335,8 +373,51 @@ static int iiod_responder_reader_worker(struct iiod_responder *priv)
 	iio_task_flush(priv->write_task);
 
 	iio_mutex_unlock(priv->lock);
+}
 
-	return (int)ret;
+static bool iiod_responder_stopped(struct iiod_responder *priv)
+{
+	bool stop;
+
+	iio_mutex_lock(priv->lock);
+	stop = priv->thrd_stop;
+	iio_mutex_unlock(priv->lock);
+
+	return stop;
+}
+
+int iiod_responder_step(struct iiod_responder *priv)
+{
+	enum iiod_step_res res;
+
+	if (iiod_responder_stopped(priv))
+		return priv->step_ret ? priv->step_ret : -EPIPE;
+
+	res = iiod_responder_do_step(priv);
+	if (res == IIOD_STEP_BLOCKED)
+		return 0;
+	if (res == IIOD_STEP_OK)
+		return 1;
+
+	iiod_responder_reader_finish(priv);
+
+	return priv->step_ret ? priv->step_ret : -EPIPE;
+}
+
+static int iiod_responder_reader_worker(struct iiod_responder *priv)
+{
+	priv->step_ret = 0;
+
+	while (!iiod_responder_stopped(priv)) {
+		enum iiod_step_res res = iiod_responder_do_step(priv);
+
+		if (res == IIOD_STEP_DONE)
+			break;
+	}
+
+	iiod_responder_reader_finish(priv);
+
+	return priv->step_ret;
 }
 
 static int iiod_responder_reader_thrd(void *d)
@@ -355,7 +436,8 @@ static int iiod_responder_write(void *p, void *elm)
 	cmd_buf.ptr = &writer->w_io.cmd;
 	cmd_buf.size = sizeof(cmd);
 
-	ret = iiod_rw_all(priv, &cmd_buf, writer->w_io.buf, writer->w_io.nb_buf, 0, false);
+	ret = iiod_rw_all(priv, &cmd_buf, writer->w_io.buf, writer->w_io.nb_buf, 0, false,
+			  false);
 	writer->w_io.cmd.code = (int32_t)ret;
 
 	return 0;

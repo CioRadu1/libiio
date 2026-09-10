@@ -7,6 +7,7 @@
  */
 
 #include <iio/iio-lock.h>
+#include <stdlib.h>
 
 #include "../iiod/ops.h"
 #include "tinyiiod.h"
@@ -141,6 +142,55 @@ void iiod_cleanup(void)
 	 * to avoid race conditions with other threads that might be
 	 * calling iiod_init() concurrently. This is a small memory leak
 	 * but is acceptable for most use cases. */
+}
+
+struct iiod_interp {
+	struct iiod_ctx ctx;
+	struct iiod_responder *responder;
+};
+
+struct iiod_interp *iiod_interpreter_create(struct iio_context *ctx,
+		struct iiod_pdata *pdata,
+		ssize_t (*read_cb)(struct iiod_pdata *, void *, size_t),
+		ssize_t (*write_cb)(struct iiod_pdata *, const void *, size_t),
+		const void *xml_zstd, size_t xml_zstd_len)
+{
+	struct iiod_interp *interp;
+
+	if (!iiod_locks_created || !buflist_lock || !evlist_lock)
+		return NULL;
+
+	interp = calloc(1, sizeof(*interp));
+	if (!interp)
+		return NULL;
+
+	interp->ctx.parser_pdata.ctx = ctx;
+	interp->ctx.parser_pdata.xml_zstd = xml_zstd;
+	interp->ctx.parser_pdata.xml_zstd_len = xml_zstd_len;
+	interp->ctx.parser_pdata.readfd = iiod_readfd;
+	interp->ctx.parser_pdata.writefd = iiod_writefd;
+	interp->ctx.read_cb = read_cb;
+	interp->ctx.write_cb = write_cb;
+	interp->ctx.pdata = pdata;
+
+	interp->responder = binary_parse_create(&interp->ctx.parser_pdata);
+	if (iio_err(interp->responder)) {
+		free(interp);
+		return NULL;
+	}
+
+	return interp;
+}
+
+int iiod_interpreter_step(struct iiod_interp *interp)
+{
+	return binary_parse_step(interp->responder);
+}
+
+void iiod_interpreter_destroy(struct iiod_interp *interp)
+{
+	binary_parse_destroy(interp->responder, &interp->ctx.parser_pdata);
+	free(interp);
 }
 
 int iiod_interpreter(struct iio_context *ctx, struct iiod_pdata *pdata,

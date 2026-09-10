@@ -105,6 +105,14 @@ void iiod_responder_stop(struct iiod_responder *responder);
 /* Wait until the iiod_responder stops. */
 void iiod_responder_wait_done(struct iiod_responder *responder);
 
+/* Handle at most one incoming command, without blocking when the transport has
+ * nothing to deliver. Returns 1 if a command was handled, 0 if the transport
+ * would block, or a negative error code once the responder is done, in which
+ * case its resources have already been released.
+ * Requires a transport whose read callback returns -EAGAIN instead of blocking;
+ * iiod_responder_wait_done() remains the right entry point otherwise. */
+int iiod_responder_step(struct iiod_responder *responder);
+
 /* Create a iiod_io instance, to be used for I/O. */
 struct iiod_io *iiod_responder_create_io(struct iiod_responder *responder, uint16_t id);
 
