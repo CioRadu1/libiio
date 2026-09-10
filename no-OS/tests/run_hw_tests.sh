@@ -18,16 +18,21 @@ TESTS="test_context test_device test_channel test_rw test_buffer test_attr"
 
 usage() {
 	cat >&2 <<USAGE
-usage: $(basename "$0") {uart|network|usb}
+usage: $(basename "$0") {uart|network|usb} [suite ...]
 
 Builds and flashes the matching firmware preset, then runs the _remote test
-binaries against the board over that transport.
+binaries against the board over that transport, printing every assertion as
+it happens.
+
+Suites (default: all, in this order):
+  test_context test_device test_channel test_rw test_buffer test_attr
 
 Environment overrides:
   NOOS_TESTS_PORT   serial device for the uart protocol (default: autodetect)
   NOOS_TESTS_HOST   board address for the network protocol
   NOOS_TESTS_URI    full libiio URI, skips all detection
   SKIP_FLASH=1      reuse whatever is already running on the board
+  QUIET_BUILD=1     hide the compiler output
 USAGE
 	exit 1
 }
@@ -39,11 +44,25 @@ die() {
 
 case $PROTO in
 uart|network|usb)
+	shift
 	;;
 *)
 	usage
 	;;
 esac
+
+if [ "$#" -gt 0 ]; then
+	for want in "$@"; do
+		case " $TESTS " in
+		*" $want "*)
+			;;
+		*)
+			die "unknown suite '$want'"
+			;;
+		esac
+	done
+	TESTS="$*"
+fi
 
 build_tests() {
 	echo "== building host test binaries =="
@@ -57,9 +76,15 @@ build_tests() {
 		targets="$targets ${t}_remote"
 	done
 
-	# shellcheck disable=SC2086
-	cmake --build "$NOOS_DIR/build-tests" --target $targets >/dev/null || \
-		die "cannot build the remote test binaries"
+	if [ "${QUIET_BUILD:-0}" = "1" ]; then
+		# shellcheck disable=SC2086
+		cmake --build "$NOOS_DIR/build-tests" --target $targets >/dev/null || \
+			die "cannot build the remote test binaries"
+	else
+		# shellcheck disable=SC2086
+		cmake --build "$NOOS_DIR/build-tests" --target $targets || \
+			die "cannot build the remote test binaries"
+	fi
 }
 
 flash_board() {
@@ -166,21 +191,28 @@ passed=0
 failed=0
 timedout=0
 results=""
+total_suites=$(set -- $TESTS; echo $#)
+n=0
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
 
 for t in $TESTS; do
 	bin=$TEST_DIR/${t}_remote
+	n=$((n + 1))
 
 	[ -x "$bin" ] || die "$bin is missing"
 
 	echo
-	echo "---- $t ----"
-	timeout "$TIMEOUT" "$bin"
-	rc=$?
+	echo "======== [$n/$total_suites] $t ========"
+	stdbuf -oL -eL timeout "$TIMEOUT" "$bin" 2>&1 | tee "$log"
+	rc=${PIPESTATUS[0]}
+	counts=$(awk '/^Passed:/{p=$2} /^Failed:/{f=$2} END{if (p != "") printf "%s/%s", p, p+f}' "$log")
+	[ -n "$counts" ] && counts=" ($counts assertions)"
 
 	case $rc in
 	0)
 		passed=$((passed + 1))
-		results="$results\n  PASS    $t"
+		results="$results\n  PASS    $t$counts"
 		;;
 	124)
 		timedout=$((timedout + 1))
@@ -192,7 +224,7 @@ for t in $TESTS; do
 		;;
 	*)
 		failed=$((failed + 1))
-		results="$results\n  FAIL    $t (exit $rc)"
+		results="$results\n  FAIL    $t (exit $rc)$counts"
 		;;
 	esac
 done
