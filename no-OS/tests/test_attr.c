@@ -41,6 +41,9 @@ TEST_FUNCTION(attr_read_all)
 		const struct iio_attr *attr = iio_device_get_attr(dev, i);
 
 		ret = iio_attr_read_raw(attr, buf, sizeof(buf));
+		TEST_IN("device attr \"%s\", buffer %zu bytes",
+			iio_attr_get_name(attr), sizeof(buf));
+		TEST_OUT("ret = %zd, value = \"%s\"", ret, ret > 0 ? buf : "");
 		TEST_ASSERT(ret > 0, iio_attr_get_name(attr));
 		if (ret > 0)
 			TEST_ASSERT(buf[ret - 1] == '\0',
@@ -56,6 +59,10 @@ TEST_FUNCTION(attr_read_all)
 				iio_channel_get_attr(chn, j);
 
 			ret = iio_attr_read_raw(attr, buf, sizeof(buf));
+			TEST_IN("channel %u attr \"%s\", buffer %zu bytes",
+				i, iio_attr_get_name(attr), sizeof(buf));
+			TEST_OUT("ret = %zd, value = \"%s\"", ret,
+				 ret > 0 ? buf : "");
 			TEST_ASSERT(ret > 0, iio_attr_get_name(attr));
 			if (ret > 0)
 				TEST_ASSERT(buf[ret - 1] == '\0',
@@ -79,8 +86,10 @@ TEST_FUNCTION(attr_internal_ref_voltage)
 		return;
 	}
 
+	TEST_IN("read_longlong(\"internal_ref_voltage\")");
 	TEST_INT_EQ(iio_attr_read_longlong(attr, &val), 0,
 			      "internal_ref_voltage reads as an integer");
+	TEST_OUT("value = %lld mV", val);
 	TEST_ASSERT(val > 0, "internal_ref_voltage is positive");
 
 	iio_context_destroy(ctx);
@@ -103,9 +112,12 @@ TEST_FUNCTION(attr_raw_in_range)
 	attr = iio_channel_find_attr(chn, "raw");
 	raw_max = test_chan_raw_max(chn);
 
+	TEST_IN("read_longlong(\"raw\"), %u-bit channel, allowed range 0..%ld",
+		test_chan_bits(chn), raw_max);
 	TEST_ASSERT(raw_max > 0, "resolution yields a usable raw range");
 	TEST_INT_EQ(iio_attr_read_longlong(attr, &val), 0,
 			      "raw reads as an integer");
+	TEST_OUT("raw = %lld", val);
 	TEST_ASSERT(val >= 0 && val <= raw_max,
 		    "raw is within the channel resolution");
 
@@ -127,8 +139,10 @@ TEST_FUNCTION(attr_scale_is_double)
 
 	attr = iio_channel_find_attr(chn, "scale");
 
+	TEST_IN("read_double(\"scale\")");
 	TEST_INT_EQ(iio_attr_read_double(attr, &val), 0,
 			      "scale reads as a double");
+	TEST_OUT("scale = %f", val);
 	TEST_ASSERT(val > 0.0, "scale is positive");
 
 	iio_context_destroy(ctx);
@@ -148,24 +162,41 @@ TEST_FUNCTION(attr_enum_values)
 	}
 
 	if (iio_attr_read_raw(iio_channel_find_attr(chn, "gain"),
-			      buf, sizeof(buf)) > 0)
+			      buf, sizeof(buf)) > 0) {
+		TEST_IN("gain must be one of %zu known values (\"%s\"..\"%s\")",
+			sizeof(gain_values) / sizeof(gain_values[0]),
+			gain_values[0],
+			gain_values[sizeof(gain_values) /
+				    sizeof(gain_values[0]) - 1]);
+		TEST_OUT("gain = \"%s\"", buf);
 		TEST_ASSERT(in_table(gain_values,
 				     sizeof(gain_values) /
 				     sizeof(gain_values[0]), buf),
 			    "gain reads back a known value");
+	}
 
 	if (iio_attr_read_raw(iio_channel_find_attr(chn, "reference"),
-			      buf, sizeof(buf)) > 0)
+			      buf, sizeof(buf)) > 0) {
+		TEST_IN("reference must be one of %zu known values "
+			"(\"%s\"..\"%s\")",
+			sizeof(reference_values) / sizeof(reference_values[0]),
+			reference_values[0],
+			reference_values[sizeof(reference_values) /
+					 sizeof(reference_values[0]) - 1]);
+		TEST_OUT("reference = \"%s\"", buf);
 		TEST_ASSERT(in_table(reference_values,
 				     sizeof(reference_values) /
 				     sizeof(reference_values[0]), buf),
 			    "reference reads back a known value");
+	}
 
+	TEST_IN("read_longlong(\"differential\"), allowed values 0 or 1");
 	TEST_INT_EQ(iio_attr_read_longlong(
 				      iio_channel_find_attr(chn,
 							    "differential"),
 				      &diff), 0,
 			      "differential reads as an integer");
+	TEST_OUT("differential = %lld", diff);
 	TEST_ASSERT(diff == 0 || diff == 1, "differential is 0 or 1");
 
 	iio_context_destroy(ctx);
@@ -179,7 +210,7 @@ TEST_FUNCTION(attr_short_buffer)
 	const struct iio_attr *attr;
 	char guarded[8];
 	char full[32];
-	ssize_t full_ret;
+	ssize_t full_ret, short_ret, again;
 
 	if (!chn) {
 		iio_context_destroy(ctx);
@@ -191,7 +222,15 @@ TEST_FUNCTION(attr_short_buffer)
 	memset(full, 'x', sizeof(full));
 
 	full_ret = iio_attr_read_raw(attr, full, sizeof(full));
-	(void)iio_attr_read_raw(attr, guarded, 4);
+	TEST_IN("read \"reference\" into %zu bytes, then into only 4 bytes",
+		sizeof(full));
+	TEST_OUT("full read ret = %zd, value = \"%s\"", full_ret,
+		 full_ret > 0 ? full : "");
+
+	short_ret = iio_attr_read_raw(attr, guarded, 4);
+	TEST_OUT("short read ret = %zd, buffer = [%c%c%c%c], guard = [%c%c%c%c]",
+		 short_ret, guarded[0], guarded[1], guarded[2], guarded[3],
+		 guarded[4], guarded[5], guarded[6], guarded[7]);
 
 	TEST_ASSERT(full_ret > 0, "a full-size read succeeds");
 	if (full_ret > 0)
@@ -202,7 +241,11 @@ TEST_FUNCTION(attr_short_buffer)
 		    "a short read does not write past the buffer");
 
 	memset(full, 'x', sizeof(full));
-	TEST_LONG_EQ(iio_attr_read_raw(attr, full, sizeof(full)), full_ret,
+	again = iio_attr_read_raw(attr, full, sizeof(full));
+	TEST_IN("re-read \"reference\" into %zu bytes, expecting ret %zd",
+		sizeof(full), full_ret);
+	TEST_OUT("ret = %zd, value = \"%s\"", again, again > 0 ? full : "");
+	TEST_LONG_EQ(again, full_ret,
 		     "the attribute is still readable after a short read");
 
 	iio_context_destroy(ctx);
