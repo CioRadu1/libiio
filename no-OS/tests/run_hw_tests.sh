@@ -15,7 +15,7 @@ USB_VID_PID=0456:b673
 TIMEOUT=60
 
 TESTS="test_context test_device test_channel test_rw test_buffer test_attr"
-ALL_SUITES="$TESTS test_concurrent"
+ALL_SUITES="$TESTS test_concurrent test_faults"
 MAX_PARALLEL=${MAX_PARALLEL:-4}
 
 usage() {
@@ -29,9 +29,9 @@ it happens.
 network-multi uses the network firmware and runs the suites concurrently, in
 batches of MAX_PARALLEL, so several clients are attached to the board at once.
 
-Suites (default: all but test_concurrent, in this order):
+Suites (default: all but test_concurrent and test_faults, in this order):
   test_context test_device test_channel test_rw test_buffer test_attr
-  test_concurrent
+  test_concurrent test_faults
 
 Environment overrides:
   NOOS_TESTS_PORT   serial device for the uart protocol (default: autodetect)
@@ -40,6 +40,8 @@ Environment overrides:
   MAX_PARALLEL      concurrent clients for network-multi (default: 4)
   SKIP_FLASH=1      reuse whatever is already running on the board
   QUIET_BUILD=1     hide the compiler output
+  NOOS_CONSOLE_PORT serial device carrying the board console (default: autodetect)
+  NO_CONSOLE=1      do not watch the board console for server-side errors
 USAGE
 	exit 1
 }
@@ -209,7 +211,74 @@ results=""
 total_suites=$(set -- $TESTS; echo $#)
 n=0
 log=$(mktemp)
-trap 'rm -f "$log"' EXIT
+CONSOLE_LOG=""
+CONSOLE_PID=""
+CONSOLE_FATAL_RE='^(EMERG|ALERT|CRIT|ERROR|ERR):'
+CONSOLE_BENIGN_RE='client refused'
+console_errors=0
+
+console_cleanup() {
+	if [ -n "$CONSOLE_PID" ]; then
+		kill "$CONSOLE_PID" 2>/dev/null
+		CONSOLE_PID=""
+	fi
+
+	[ -n "$CONSOLE_LOG" ] && rm -f "$CONSOLE_LOG"
+}
+
+trap 'rm -f "$log"; console_cleanup' EXIT
+
+console_start() {
+	local port=${NOOS_CONSOLE_PORT:-}
+
+	[ "$PROTO" = "network" ] || return 0
+	[ "${NO_CONSOLE:-0}" = "0" ] || return 0
+
+	case " $TESTS " in
+	*" test_faults "*)
+		CONSOLE_BENIGN_RE="$CONSOLE_BENIGN_RE|invalid opcode"
+		;;
+	esac
+
+	[ -n "$port" ] || port=$(ls /dev/ttyACM* 2>/dev/null | head -1)
+
+	if [ -z "$port" ] || [ ! -r "$port" ]; then
+		echo "== no board console found, server-side errors are not checked =="
+		return 0
+	fi
+
+	if ! stty -F "$port" 115200 raw -echo 2>/dev/null; then
+		echo "== $port cannot be configured, server-side errors are not checked =="
+		return 0
+	fi
+
+	CONSOLE_LOG=$(mktemp)
+	cat "$port" >"$CONSOLE_LOG" 2>/dev/null &
+	CONSOLE_PID=$!
+
+	echo "== watching the board console on $port =="
+}
+
+console_report() {
+	local errs lines
+
+	[ -n "$CONSOLE_LOG" ] || return 0
+
+	sleep 1
+	kill "$CONSOLE_PID" 2>/dev/null
+	wait "$CONSOLE_PID" 2>/dev/null
+	CONSOLE_PID=""
+
+	errs=$(grep -aE "$CONSOLE_FATAL_RE" "$CONSOLE_LOG" | \
+	       grep -avE "$CONSOLE_BENIGN_RE")
+	lines=$(grep -ac . "$CONSOLE_LOG")
+	console_errors=$(printf '%s' "$errs" | grep -ac .)
+
+	echo
+	echo "== board console: $lines line(s), $console_errors error(s) =="
+
+	[ "$console_errors" -eq 0 ] || printf '%s\n' "$errs"
+}
 
 record_result() {
 	local t=$1 rc=$2 logfile=$3
@@ -319,6 +388,7 @@ run_concurrent() {
 }
 
 check_binaries
+console_start
 
 if [ "$MULTI" = "1" ]; then
 	run_concurrent
@@ -326,9 +396,12 @@ else
 	run_sequential
 fi
 
+console_report
+
 echo
 echo "== $MODE summary ($URI) =="
 printf '%b\n' "$results"
 echo "  passed $passed, failed $failed, timed out $timedout"
+[ "$console_errors" -eq 0 ] || echo "  board console errors: $console_errors"
 
-[ "$failed" -eq 0 ] && [ "$timedout" -eq 0 ]
+[ "$failed" -eq 0 ] && [ "$timedout" -eq 0 ] && [ "$console_errors" -eq 0 ]
