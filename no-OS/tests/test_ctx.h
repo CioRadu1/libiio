@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static inline void test_log(const char *tag, const char *fmt, ...)
 {
@@ -59,6 +60,7 @@ static inline void test_log(const char *tag, const char *fmt, ...)
 
 #define TEST_DEVICE_NAME	"iio-adc"
 #define TEST_DEVICE_ID		"iio:device0"
+#define TEST_CTX_OPEN_RETRIES	8
 
 static const struct iio_context_params test_ctx_params = {
 	.log_level = LEVEL_WARNING,
@@ -87,16 +89,24 @@ static inline struct iio_context *test_ctx_create(void)
 
 static inline struct iio_context *test_ctx_require(void)
 {
-	struct iio_context *ctx = test_ctx_create();
-	int err = iio_err(ctx);
+	struct iio_context *ctx;
+	unsigned int try;
+	int err;
 
-	if (err) {
-		fprintf(stderr, "unable to create context %s: %d\n",
-			test_ctx_label(), err);
-		exit(EXIT_FAILURE);
+	for (try = 0; ; try++) {
+		ctx = test_ctx_create();
+		err = iio_err(ctx);
+		if (!err)
+			return ctx;
+
+		if (try == TEST_CTX_OPEN_RETRIES) {
+			fprintf(stderr, "unable to create context %s: %d\n",
+				test_ctx_label(), err);
+			exit(EXIT_FAILURE);
+		}
+
+		sleep(1);
 	}
-
-	return ctx;
 }
 
 static inline struct iio_device *test_dev_require(struct iio_context *ctx)
