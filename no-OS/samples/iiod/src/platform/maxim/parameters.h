@@ -8,7 +8,7 @@
 #define IIOD_PARAMETERS_H
 
 /* ---------- UART ---------- */
-#if !defined(NO_OS_USB_TRANSPORT) && !defined(NO_OS_LWIP_NETWORKING)
+#if !defined(NO_OS_USB_TRANSPORT)
 
 #include "maxim_uart.h"
 #include "maxim_uart_stdio.h"
