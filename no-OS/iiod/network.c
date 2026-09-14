@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <no_os_print_log.h>
+#include <no_os_alloc.h>
 #include <no_os_delay.h>
 #include <tinyiiod/tinyiiod.h>
 #include "lwip_socket.h"
@@ -18,10 +19,10 @@
 #include "iio_device.h"
 
 #define IIOD_PORT 30431
-#define MAX_CLIENTS 4
+#define MAX_CLIENTS 8
 #define NET_WRITE_TIMEOUT_S 5
 #define NET_READ_TIMEOUT_S 3
-#define POST_DISCONNECT_DELAY_MS 100
+#define NET_DRAIN_STEPS 16
 
 struct net_server {
 	struct tcp_socket_desc *server_socket;
@@ -40,14 +41,33 @@ struct iiod_net_pdata {
 	struct net_server *server;
 };
 
+struct net_client {
+	struct tcp_socket_desc *sock;
+	struct iiod_net_pdata np;
+	struct iiod_interp *interp;
+	bool used;
+};
+
+static struct net_client g_clients[MAX_CLIENTS];
+
 static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size);
 static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 			      size_t size);
 
+static bool net_sock_live(const struct tcp_socket_desc *sock)
+{
+	if (!sock || sock->id >= NO_OS_MAX_SOCKETS)
+		return false;
+
+	return g_server.lwip->sockets[sock->id].state == SOCKET_CONNECTED;
+}
+
 static void net_drain(struct lwip_network_desc *lwip)
 {
-	no_os_mdelay(POST_DISCONNECT_DELAY_MS);
-	no_os_lwip_step(lwip, NULL);
+	unsigned int i;
+
+	for (i = 0; i < NET_DRAIN_STEPS; i++)
+		no_os_lwip_step(lwip, NULL);
 }
 
 static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
@@ -74,7 +94,12 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 			deadline = no_os_get_time();
 			deadline.s += NET_READ_TIMEOUT_S;
 		} else if (ret == 0) {
-			struct no_os_time now = no_os_get_time();
+			struct no_os_time now;
+
+			if (!total)
+				return -EAGAIN;
+
+			now = no_os_get_time();
 
 			if (now.s > deadline.s ||
 			    (now.s == deadline.s && now.us >= deadline.us))
@@ -127,14 +152,72 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 	return (ssize_t)total;
 }
 
+static int net_client_add(struct tcp_socket_desc *sock)
+{
+	struct net_client *cl = NULL;
+	unsigned int i;
+
+	for (i = 0; i < MAX_CLIENTS; i++) {
+		if (!g_clients[i].used) {
+			cl = &g_clients[i];
+			break;
+		}
+	}
+
+	if (!cl)
+		return -ENOSPC;
+
+	cl->sock = sock;
+	cl->np.client = sock;
+	cl->np.lwip = g_server.lwip;
+	cl->np.server = &g_server;
+
+	cl->interp = iiod_interpreter_create(g_server.ctx,
+					     (struct iiod_pdata *)&cl->np,
+					     iiod_net_read, iiod_net_write,
+					     g_server.xml, g_server.xml_len);
+	if (!cl->interp)
+		return -ENOMEM;
+
+	cl->used = true;
+	g_server.active_count++;
+
+	pr_info("IIOD: client %u connected (%u active)\n", i,
+		g_server.active_count);
+
+	return 0;
+}
+
+static void net_client_del(unsigned int slot, int reason)
+{
+	struct net_client *cl = &g_clients[slot];
+
+	iiod_interpreter_destroy(cl->interp);
+
+	if (net_sock_live(cl->sock))
+		socket_remove(cl->sock);
+	else
+		no_os_free(cl->sock);
+
+	cl->interp = NULL;
+	cl->sock = NULL;
+	cl->used = false;
+	g_server.active_count--;
+
+	pr_info("IIOD: client %u disconnected (%d, %u active)\n", slot, reason,
+		g_server.active_count);
+
+	net_drain(g_server.lwip);
+}
+
 int iiod_network_run(struct lwip_network_desc *lwip_desc)
 {
 	struct iio_context_params ctx_params = {0};
 	struct tcp_socket_init_param tcp_ip = { .max_buff_size = 0 };
 	struct tcp_socket_desc *server_socket;
 	struct tcp_socket_desc *client_socket;
-	struct iiod_net_pdata np;
 	struct iio_context *ctx;
+	unsigned int i;
 	char *xml;
 	size_t xml_len;
 	int ret;
@@ -192,34 +275,29 @@ int iiod_network_run(struct lwip_network_desc *lwip_desc)
 	pr_info("IIOD: listening on port %d\n", IIOD_PORT);
 
 	while (1) {
-		ret = socket_accept(server_socket, &client_socket);
-		if (ret == -EAGAIN) {
-			no_os_lwip_step(lwip_desc, NULL);
-			continue;
+		no_os_lwip_step(lwip_desc, NULL);
+
+		for (i = 0; i < MAX_CLIENTS; i++) {
+			if (!g_clients[i].used)
+				continue;
+
+			ret = iiod_interpreter_step(g_clients[i].interp);
+			if (ret < 0)
+				net_client_del(i, ret);
 		}
-		if (ret) {
+
+		ret = socket_accept(server_socket, &client_socket);
+		if (!ret) {
+			ret = net_client_add(client_socket);
+			if (ret) {
+				pr_err("IIOD: client refused: %d\n", ret);
+				socket_remove(client_socket);
+				net_drain(lwip_desc);
+			}
+		} else if (ret != -EAGAIN) {
 			pr_err("socket_accept failed: %d\n", ret);
 			break;
 		}
-
-		pr_info("IIOD: client connected\n");
-
-		np.client = client_socket;
-		np.lwip = lwip_desc;
-		np.server = &g_server;
-
-		g_server.active_count++;
-
-		ret = iiod_interpreter(ctx, (struct iiod_pdata *)&np,
-				       iiod_net_read, iiod_net_write,
-				       xml, xml_len);
-
-		pr_info("IIOD: client disconnected (%d)\n", ret);
-
-		socket_remove(client_socket);
-		g_server.active_count--;
-
-		net_drain(lwip_desc);
 	}
 
 err_server:
