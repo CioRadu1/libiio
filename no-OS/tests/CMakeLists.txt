@@ -12,6 +12,7 @@ set(NOOS_TEST_NAMES
   test_rw
   test_buffer
   test_concurrent
+  test_faults
 )
 
 set(NOOS_REMOTE_LIB ${LIBIIO_DIR}/build/libiio.so)
