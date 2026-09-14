@@ -8,6 +8,7 @@
 
 #include <string.h>
 #include <errno.h>
+#include <no_os_uart.h>
 #include <no_os_print_log.h>
 #include <no_os_alloc.h>
 #include <no_os_delay.h>
@@ -311,6 +312,16 @@ err_ctx:
 int noos_iiod_run(void)
 {
 	struct lwip_network_desc *lwip_desc;
+	struct no_os_uart_desc *console;
+	struct no_os_uart_init_param console_ip = {
+		.device_id = UART_DEVICE_ID,
+		.baud_rate = UART_BAUDRATE,
+		.size = NO_OS_UART_CS_8,
+		.parity = NO_OS_UART_PAR_NO,
+		.stop = NO_OS_UART_STOP_1_BIT,
+		.platform_ops = UART_OPS,
+		.extra = UART_EXTRA,
+	};
 	struct noos_net_config cfg = {
 		.lwip_ops = NET_LWIP_OPS,
 		.mac_param = NET_MAC_PARAM,
@@ -323,28 +334,37 @@ int noos_iiod_run(void)
 	struct noos_iio_device_info adc_info;
 	int ret;
 
-	ret = iio_adc_init();
+	ret = no_os_uart_init(&console, &console_ip);
 	if (ret)
 		return ret;
+
+	no_os_uart_stdio(console);
+
+	ret = iio_adc_init();
+	if (ret)
+		goto err_console;
 
 	ret = iio_adc_get_device_info(&adc_info);
 	if (ret)
-		return ret;
+		goto err_console;
 
 	ret = noos_iio_register_device(&adc_info);
 	if (ret)
-		return ret;
+		goto err_console;
 
 	memcpy(lwip_param.hwaddr, cfg.mac_addr, 6);
 
 	ret = no_os_lwip_init(&lwip_desc, &lwip_param);
 	if (ret) {
 		pr_err("lwIP init failed: %d\n", ret);
-		return ret;
+		goto err_console;
 	}
 
 	ret = iiod_network_run(lwip_desc);
 	no_os_lwip_remove(lwip_desc);
+
+err_console:
+	no_os_uart_remove(console);
 
 	return ret;
 }
