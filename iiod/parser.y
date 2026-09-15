@@ -22,11 +22,13 @@ void yyerror(yyscan_t scanner, const char *msg);
 typedef void *yyscan_t;
 #endif
 
-#include "../iio-config.h"
+#include "iio-config.h"
 #include "debug.h"
 
 #include <stdbool.h>
+#if !WITH_LIBTINYIIOD
 #include <sys/socket.h>
+#endif
 
 union YYSTYPE;
 
@@ -162,6 +164,7 @@ Line:
 	}
 	| ZPRINT END {
 		struct parser_pdata *pdata = yyget_extra(scanner);
+#if WITH_ZSTD
 		if (pdata->xml_zstd) {
 			char buf[128];
 			snprintf(buf, sizeof(buf), "%lu\n", (unsigned long)pdata->xml_zstd_len);
@@ -170,7 +173,9 @@ Line:
 				pdata->stop = true;
 			output(pdata, "\n");
 			YYACCEPT;
-		} else {
+		} else
+#endif
+		{
 			char buf[128];
 			snprintf(buf, sizeof(buf), "%d\n", -EINVAL);
 			output(pdata, buf);
