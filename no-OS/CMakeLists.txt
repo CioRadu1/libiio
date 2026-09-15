@@ -60,6 +60,13 @@ option(WITH_IIOD_UART    "Build UART transport"    ON)
 option(WITH_IIOD_NETWORK "Build network transport"  ON)
 option(WITH_IIOD_USB     "Build USB transport"     OFF)
 
+option(WITH_IIOD_V0_COMPAT "Build v0 (ASCII) protocol compat for UART" ON)
+if(WITH_IIOD_V0_COMPAT AND WITH_IIOD_UART)
+  set(V0_COMPAT_ON 1)
+else()
+  set(V0_COMPAT_ON 0)
+endif()
+
 # ---------- no-OS backend / transport sources ----------
 set(NOOS_BACKEND_SRCS
   ${CMAKE_CURRENT_SOURCE_DIR}/backend.c
@@ -128,7 +135,7 @@ set(COMMON_DEFS
   WITH_LIBTINYIIOD=1
   WITH_EXTERNAL_BACKEND=1
   WITH_IIOD_USB_DMABUF=0
-  WITH_IIOD_V0_COMPAT=0
+  WITH_IIOD_V0_COMPAT=${V0_COMPAT_ON}
   WITH_LOCAL_BACKEND=0
   WITH_NETWORK_BACKEND=0
   WITH_SERIAL_BACKEND=0
@@ -150,6 +157,42 @@ set(COMMON_DEFS
   LIBIIO_SCAN_BACKENDS=""
   DISABLE_SECURE_SOCKET
 )
+
+# ---------- v0 (ASCII) protocol compat sources ----------
+if(V0_COMPAT_ON)
+  find_program(BISON_EXECUTABLE bison REQUIRED)
+  find_program(FLEX_EXECUTABLE  flex  REQUIRED)
+
+  set(V0_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/v0-compat)
+  file(MAKE_DIRECTORY ${V0_GEN_DIR})
+
+  add_custom_command(
+    OUTPUT  ${V0_GEN_DIR}/parser.c ${V0_GEN_DIR}/parser.h
+    COMMAND ${BISON_EXECUTABLE} -d -o ${V0_GEN_DIR}/parser.c ${LIBIIO_DIR}/iiod/parser.y
+    DEPENDS ${LIBIIO_DIR}/iiod/parser.y
+    COMMENT "bison: iiod/parser.y"
+  )
+  add_custom_command(
+    OUTPUT  ${V0_GEN_DIR}/lexer.c
+    COMMAND ${FLEX_EXECUTABLE} -o ${V0_GEN_DIR}/lexer.c ${LIBIIO_DIR}/iiod/lexer.l
+    DEPENDS ${LIBIIO_DIR}/iiod/lexer.l ${V0_GEN_DIR}/parser.h
+    COMMENT "flex: iiod/lexer.l"
+  )
+
+  list(APPEND NOOS_BACKEND_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/ascii-ops.c
+    ${V0_GEN_DIR}/parser.c
+    ${V0_GEN_DIR}/lexer.c
+  )
+  list(APPEND COMMON_INCLUDES ${V0_GEN_DIR})
+
+  set_source_files_properties(
+    ${V0_GEN_DIR}/parser.c
+    ${V0_GEN_DIR}/lexer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/ascii-ops.c
+    PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare"
+  )
+endif()
 
 ###############################################################################
 # Cross-compilation for a bare-metal board (CMAKE_SYSTEM_NAME == "Generic")
