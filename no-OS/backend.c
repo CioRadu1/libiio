@@ -8,7 +8,6 @@
 #include <iio-private.h>
 #include <errno.h>
 #include <no_os_print_log.h>
-#include <string.h>
 #include <iio_device.h>
 
 #define NOOS_BACKEND_VERSION "no-OS 1.0 " __DATE__ " " __TIME__
@@ -176,15 +175,6 @@ noos_read_attr(const struct iio_attr *attr, char *dst, size_t len)
 	struct noos_iio_device_info *info =
 		(struct noos_iio_device_info *)iio_device_get_pdata(iio_dev);
 
-	/* Buffer attributes are handled internally */
-	if (attr->type == IIO_ATTR_TYPE_BUFFER) {
-		const char *name = iio_attr_get_name(attr);
-
-		if (name && strcmp(name, "length") == 0)
-			return snprintf(dst, len, "0") + 1;
-		return -EINVAL;
-	}
-
 	if (!info || !info->read_attr)
 		return -ENOSYS;
 
@@ -207,7 +197,7 @@ noos_write_attr(const struct iio_attr *attr, const char *src, size_t len)
 static const struct iio_device *
 noos_get_trigger(const struct iio_device *dev)
 {
-	return NULL;
+	return iio_ptr(-ENODEV);
 }
 
 static int noos_reg_read(const struct iio_device *dev, uint32_t address,
@@ -271,7 +261,6 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 
 				iio_buffer_set_direction(buf,
 							info->direction ? "out" : "in");
-				iio_buffer_add_attr(buf, "length");
 				nb_channels = iio_device_get_channels_count(iio_dev);
 				for (c = 0; c < nb_channels; c++) {
 					struct iio_channel *chn =
