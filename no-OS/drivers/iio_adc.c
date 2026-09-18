@@ -9,9 +9,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include "iio_adc.h"
 #include "iio_adc_hal.h"
-#include "iio_val.h"
 #include <iio/iio-backend.h>
 
 static const char *const gain_values[] = {
@@ -60,16 +62,99 @@ struct adc_channel_state {
 
 static struct adc_channel_state chan_state[IIO_ADC_MAX_CHANNELS];
 
-static enum iio_val_type iio_adc_get_fmt(const char *attr_name)
+static int adc_emit_int(char *dst, size_t len, int val)
 {
-	if (strcmp(attr_name, "scale") == 0)
-		return IIO_VAL_INT_PLUS_MICRO;
+	int ret = snprintf(dst, len, "%d", val);
 
-	if (strcmp(attr_name, "gain") == 0 ||
-	    strcmp(attr_name, "reference") == 0)
-		return IIO_VAL_CHAR;
+	if (ret < 0 || (size_t)ret >= len)
+		return -EINVAL;
 
-	return IIO_VAL_INT;
+	return ret + 1;
+}
+
+static int adc_emit_micro(char *dst, size_t len, int val, int val2)
+{
+	int ret;
+
+	if (val2 < 0)
+		ret = snprintf(dst, len, "-%d.%06u", abs(val),
+			       (unsigned int)-val2);
+	else
+		ret = snprintf(dst, len, "%d.%06u", val, (unsigned int)val2);
+
+	if (ret < 0 || (size_t)ret >= len)
+		return -EINVAL;
+
+	return ret + 1;
+}
+
+static int adc_parse_int(const char *src, int *val)
+{
+	char *end;
+	long parsed;
+
+	if (!(*src == '-' || *src == '+' || (*src >= '0' && *src <= '9')))
+		return -EINVAL;
+
+	errno = 0;
+	parsed = strtol(src, &end, 10);
+	if (end == src || errno == ERANGE || (long)(int)parsed != parsed)
+		return -EINVAL;
+
+	if (*end == '\n')
+		end++;
+	if (*end != '\0')
+		return -EINVAL;
+
+	*val = (int)parsed;
+
+	return 0;
+}
+
+static int adc_parse_micro(const char *src, int *val, int *val2)
+{
+	int integer = 0, fract = 0, mult = 100000;
+	bool negative = false, integer_part = true;
+
+	if (*src == '-') {
+		negative = true;
+		src++;
+	} else if (*src == '+') {
+		src++;
+	}
+
+	if (*src == '\0')
+		return -EINVAL;
+
+	while (*src) {
+		if (*src >= '0' && *src <= '9') {
+			if (integer_part) {
+				integer = integer * 10 + (*src - '0');
+			} else if (mult) {
+				fract += mult * (*src - '0');
+				mult /= 10;
+			}
+		} else if (*src == '\n' && src[1] == '\0') {
+			break;
+		} else if (*src == '.' && integer_part) {
+			integer_part = false;
+		} else {
+			return -EINVAL;
+		}
+		src++;
+	}
+
+	if (negative) {
+		if (integer)
+			integer = -integer;
+		else
+			fract = -fract;
+	}
+
+	*val = integer;
+	*val2 = fract;
+
+	return 0;
 }
 
 static int adc_lookup_str(const char *const *table, size_t count,
@@ -177,18 +262,15 @@ static int iio_adc_read_attr(void *dev,
 	int idx;
 	int raw_value;
 	int ret;
-	int vals[2];
 
 	attr_name = iio_attr_get_name(attr);
 	if (!attr_name)
 		return -EINVAL;
 
 	if (attr->type == IIO_ATTR_TYPE_DEVICE) {
-		if (strcmp(attr_name, "internal_ref_voltage") == 0) {
-			vals[0] = iio_adc_hal.ref_voltage_mv;
-			ret = iio_format_value(dst, len, IIO_VAL_INT, 1, vals);
-			return (ret < 0) ? ret : ret + 1;
-		}
+		if (strcmp(attr_name, "internal_ref_voltage") == 0)
+			return adc_emit_int(dst, len,
+					    iio_adc_hal.ref_voltage_mv);
 		return -EINVAL;
 	}
 
@@ -203,22 +285,16 @@ static int iio_adc_read_attr(void *dev,
 	if (idx < 0)
 		return idx;
 
-	if (strcmp(attr_name, "scale") == 0) {
-		vals[0] = chan_state[idx].scale_val;
-		vals[1] = chan_state[idx].scale_val2;
-		ret = iio_format_value(dst, len, IIO_VAL_INT_PLUS_MICRO,
-				       2, vals);
-		return (ret < 0) ? ret : ret + 1;
-	}
+	if (strcmp(attr_name, "scale") == 0)
+		return adc_emit_micro(dst, len, chan_state[idx].scale_val,
+				      chan_state[idx].scale_val2);
 
 	if (strcmp(attr_name, "raw") == 0) {
 		ret = iio_adc_hal.read_raw((unsigned int)idx, &raw_value);
 		if (ret)
 			return ret;
 
-		vals[0] = raw_value;
-		ret = iio_format_value(dst, len, IIO_VAL_INT, 1, vals);
-		return (ret < 0) ? ret : ret + 1;
+		return adc_emit_int(dst, len, raw_value);
 	}
 
 	if (strcmp(attr_name, "gain") == 0)
@@ -229,11 +305,8 @@ static int iio_adc_read_attr(void *dev,
 		return snprintf(dst, len, "%s",
 				reference_values[chan_state[idx].reference]) + 1;
 
-	if (strcmp(attr_name, "differential") == 0) {
-		vals[0] = chan_state[idx].differential;
-		ret = iio_format_value(dst, len, IIO_VAL_INT, 1, vals);
-		return (ret < 0) ? ret : ret + 1;
-	}
+	if (strcmp(attr_name, "differential") == 0)
+		return adc_emit_int(dst, len, chan_state[idx].differential);
 
 	if (strcmp(attr_name, "process") == 0) {
 		int64_t scale_uv;
@@ -244,9 +317,9 @@ static int iio_adc_read_attr(void *dev,
 
 		scale_uv = (int64_t)chan_state[idx].scale_val * 1000000 +
 			   chan_state[idx].scale_val2;
-		vals[0] = (int)((raw_value * scale_uv) / 1000000);
-		ret = iio_format_value(dst, len, IIO_VAL_INT, 1, vals);
-		return (ret < 0) ? ret : ret + 1;
+
+		return adc_emit_int(dst, len,
+				    (int)((raw_value * scale_uv) / 1000000));
 	}
 
 	return -EINVAL;
@@ -260,7 +333,6 @@ static int iio_adc_write_attr(void *dev,
 	const char *attr_name;
 	const char *ch_id;
 	int idx;
-	int fract_mult;
 	int integer, fract;
 	int str_idx;
 	int ret;
@@ -284,11 +356,7 @@ static int iio_adc_write_attr(void *dev,
 		return idx;
 
 	if (strcmp(attr_name, "scale") == 0) {
-		fract_mult = iio_val_fract_mult(iio_adc_get_fmt(attr_name));
-		if (fract_mult < 0)
-			return fract_mult;
-
-		ret = iio_str_to_fixpoint(src, fract_mult, &integer, &fract);
+		ret = adc_parse_micro(src, &integer, &fract);
 		if (ret)
 			return ret;
 
@@ -334,11 +402,7 @@ static int iio_adc_write_attr(void *dev,
 	}
 
 	if (strcmp(attr_name, "differential") == 0) {
-		fract_mult = iio_val_fract_mult(iio_adc_get_fmt(attr_name));
-		if (fract_mult < 0)
-			return fract_mult;
-
-		ret = iio_str_to_fixpoint(src, fract_mult, &integer, &fract);
+		ret = adc_parse_int(src, &integer);
 		if (ret)
 			return ret;
 
