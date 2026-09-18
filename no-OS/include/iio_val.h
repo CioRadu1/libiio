@@ -43,10 +43,10 @@ enum iio_val_type {
  * @vals: pointer to the value(s); meaning depends on @type
  *
  * Returns the number of characters written (excluding the NUL terminator),
- * or a negative error code.
+ * -ENOSPC if the value does not fit in @len, or another negative error code.
  */
 int iio_format_value(char *buf, size_t len, enum iio_val_type type,
-		     int size, const int *vals);
+		   int size, const int *vals);
 
 /**
  * iio_str_to_fixpoint() - parse a fixed-point number from a string
@@ -56,10 +56,11 @@ int iio_format_value(char *buf, size_t len, enum iio_val_type type,
  * @integer:    output for the integer part
  * @fract:      output for the fractional part
  *
- * Returns 0 on success, or a negative error code if @str could not be parsed.
+ * Returns 0 on success, -EINVAL if @str is not a well-formed number, -ERANGE
+ * if it does not fit in an int, or another negative error code.
  */
 int iio_str_to_fixpoint(const char *str, int fract_mult,
-			int *integer, int *fract);
+			    int *integer, int *fract);
 
 /**
  * iio_val_fract_mult() - fractional multiplier to use when parsing @type

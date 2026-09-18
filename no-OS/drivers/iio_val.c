@@ -15,35 +15,56 @@
  */
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include "iio_val.h"
 
+static int iio_val_snprintf(char *buf, size_t len, const char *fmt, ...)
+{
+	va_list ap;
+	int ret;
+
+	va_start(ap, fmt);
+	ret = vsnprintf(buf, len, fmt, ap);
+	va_end(ap);
+
+	if (ret < 0)
+		return -EINVAL;
+
+	if ((size_t)ret >= len)
+		return -ENOSPC;
+
+	return ret;
+}
+
 int iio_format_value(char *buf, size_t len, enum iio_val_type type,
-		     int size, const int *vals)
+		   int size, const int *vals)
 {
 	if (!buf || !vals || len == 0)
 		return -EINVAL;
 
 	switch (type) {
 	case IIO_VAL_INT:
-		return snprintf(buf, len, "%d", vals[0]);
+		return iio_val_snprintf(buf, len, "%d", vals[0]);
 	case IIO_VAL_INT_PLUS_MICRO:
 		if (vals[1] < 0)
-			return snprintf(buf, len, "-%d.%06u",
-					abs(vals[0]), (unsigned int)-vals[1]);
+			return iio_val_snprintf(buf, len, "-%d.%06u",
+					      abs(vals[0]),
+					      (unsigned int)-vals[1]);
 		else
-			return snprintf(buf, len, "%d.%06u",
-					vals[0], (unsigned int)vals[1]);
+			return iio_val_snprintf(buf, len, "%d.%06u",
+					      vals[0], (unsigned int)vals[1]);
 	case IIO_VAL_INT_PLUS_NANO:
 		if (vals[1] < 0)
-			return snprintf(buf, len, "-%d.%09u",
-					abs(vals[0]), (unsigned int)-vals[1]);
+			return iio_val_snprintf(buf, len, "-%d.%09u",
+					      abs(vals[0]),
+					      (unsigned int)-vals[1]);
 		else
-			return snprintf(buf, len, "%d.%09u",
-					vals[0], (unsigned int)vals[1]);
+			return iio_val_snprintf(buf, len, "%d.%09u",
+					      vals[0], (unsigned int)vals[1]);
 	case IIO_VAL_FRACTIONAL: {
 		int64_t tmp2;
 		int tmp0, tmp1;
@@ -54,27 +75,27 @@ int iio_format_value(char *buf, size_t len, enum iio_val_type type,
 		tmp0 = (int)(tmp2 / 1000000000);
 		tmp1 = (int)(tmp2 % 1000000000);
 		if (tmp2 < 0 && tmp0 == 0)
-			return snprintf(buf, len, "-0.%09u",
-					(unsigned int)abs(tmp1));
+			return iio_val_snprintf(buf, len, "-0.%09u",
+					      (unsigned int)abs(tmp1));
 		else
-			return snprintf(buf, len, "%d.%09u",
-					tmp0, (unsigned int)abs(tmp1));
+			return iio_val_snprintf(buf, len, "%d.%09u",
+					      tmp0, (unsigned int)abs(tmp1));
 	}
 	case IIO_VAL_INT_64: {
 		int64_t tmp2 = (int64_t)((((uint64_t)vals[1]) << 32) |
 					 (uint32_t)vals[0]);
 
-		return snprintf(buf, len, "%lld", (long long)tmp2);
+		return iio_val_snprintf(buf, len, "%lld", (long long)tmp2);
 	}
 	case IIO_VAL_CHAR:
-		return snprintf(buf, len, "%c", (char)vals[0]);
+		return iio_val_snprintf(buf, len, "%c", (char)vals[0]);
 	default:
 		return -EINVAL;
 	}
 }
 
 int iio_str_to_fixpoint(const char *str, int fract_mult,
-			int *integer, int *fract)
+			    int *integer, int *fract)
 {
 	int i = 0, f = 0;
 	bool integer_part = true, negative = false;
@@ -87,10 +108,18 @@ int iio_str_to_fixpoint(const char *str, int fract_mult,
 		long val;
 
 		*fract = 0;
+
+		if (!(*str == '-' || *str == '+' ||
+		      ('0' <= *str && *str <= '9')))
+			return -EINVAL;
+
+		errno = 0;
 		val = strtol(str, &end, 0);
 		if (end == str)
 			return -EINVAL;
-		while (*end == '\n')
+		if (errno == ERANGE || (long)(int)val != val)
+			return -ERANGE;
+		if (*end == '\n')
 			end++;
 		if (*end != '\0')
 			return -EINVAL;
