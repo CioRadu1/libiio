@@ -15,6 +15,24 @@ set(NOOS_TEST_NAMES
   test_faults
 )
 
+add_executable(test_iio_val
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_iio_val.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/../drivers/iio_val.c
+)
+
+target_include_directories(test_iio_val PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${LIBIIO_DIR}/tests/api
+)
+target_compile_options(test_iio_val PRIVATE -Wall -Wextra
+                       -Wno-unused-parameter)
+
+if(TESTS_DEBUG)
+  target_compile_definitions(test_iio_val PRIVATE TESTS_DEBUG)
+endif()
+
+add_test(NAME test_iio_val COMMAND test_iio_val)
+
 set(NOOS_REMOTE_LIB ${LIBIIO_DIR}/build/libiio.so)
 
 if(NOT EXISTS ${NOOS_REMOTE_LIB})
