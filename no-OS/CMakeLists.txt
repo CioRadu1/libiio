@@ -119,6 +119,14 @@ if(WITH_IIOD_NETWORK)
   )
 endif()
 
+if(WITH_IIOD_USB)
+  list(APPEND NOOS_PLATFORM_SRCS
+    ${NOOS_DIR}/drivers/api/no_os_timer.c
+    ${NOOS_DIR}/drivers/api/no_os_irq.c
+    ${NOOS_DIR}/util/no_os_list.c
+  )
+endif()
+
 # ---------- IIO ADC device driver ----------
 set(IIO_ADC_SRCS
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_adc.c
@@ -306,6 +314,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     set(LWIP_SOCKET_SRCS
       ${NOOS_DIR}/network/lwip_raw_socket/lwip_socket.c
     )
+  endif()
+
+  # --- Per-platform USB device backend (implements iio_usb_ops) ---
+  if(WITH_IIOD_USB)
+    set(USB_BACKEND_SRC
+      ${CMAKE_CURRENT_SOURCE_DIR}/platform/${BOARD_PLATFORM_NAME}/iio_usb_backend.c)
+    if(NOT EXISTS ${USB_BACKEND_SRC})
+      message(FATAL_ERROR
+        "platform '${BOARD_PLATFORM_NAME}' has no USB device backend "
+        "(expected ${USB_BACKEND_SRC}).")
+    endif()
+    list(APPEND NOOS_BACKEND_SRCS ${USB_BACKEND_SRC})
   endif()
 
   # --- Build the executable ---
