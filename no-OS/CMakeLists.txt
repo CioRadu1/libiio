@@ -75,16 +75,8 @@ option(WITH_IIOD_UART    "Build UART transport"    ON)
 option(WITH_IIOD_NETWORK "Build network transport"  ON)
 option(WITH_IIOD_USB     "Build USB transport"     OFF)
 
-option(WITH_GAME "Build the UART console game instead of the IIOD server" OFF)
-
-if(WITH_GAME AND NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
-  message(FATAL_ERROR
-    "WITH_GAME drives a board's UART console and has no host build. "
-    "Use cmake --preset game.")
-endif()
-
 option(WITH_IIOD_V0_COMPAT "Build v0 (ASCII) protocol compat for UART" ON)
-if(WITH_IIOD_V0_COMPAT AND WITH_IIOD_UART AND NOT WITH_GAME)
+if(WITH_IIOD_V0_COMPAT AND WITH_IIOD_UART)
   set(V0_COMPAT_ON 1)
 else()
   set(V0_COMPAT_ON 0)
@@ -133,17 +125,7 @@ set(IIO_ADC_SRCS
 )
 
 # ---------- Application ----------
-# WITH_GAME swaps the whole application. The game is a standalone UART demo:
-# it needs the board and the no-OS HAL, but nothing from libiio, so the core,
-# the backend and the ADC driver are dropped from the target entirely.
-if(WITH_GAME)
-  set(APP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/samples/game/main.c)
-  set(LIBIIO_SRCS "")
-  set(NOOS_BACKEND_SRCS "")
-  set(IIO_ADC_SRCS "")
-else()
-  set(APP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/main.c)
-endif()
+set(APP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/main.c)
 
 # ---------- Include directories (common) ----------
 set(COMMON_INCLUDES
@@ -244,10 +226,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 
   set(ADC common_api CACHE STRING "ADC device HAL (defaults to the board's internal ADC)")
   set(BOARD_ADC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
-
-  if(WITH_GAME)
-    set(BOARD_ADC_SRC "")
-  endif()
 
   option(WITH_LWIP_NETWORKING "Enable lwIP + ADIN1110 network transport" ON)
 

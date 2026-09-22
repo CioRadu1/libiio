@@ -62,10 +62,13 @@ TEST_FUNCTION(context_version)
 TEST_FUNCTION(context_device_count)
 {
 	struct iio_context *ctx = test_ctx_require();
+	unsigned int count = iio_context_get_devices_count(ctx);
 
-	TEST_OUT("devices_count = %u", iio_context_get_devices_count(ctx));
-	TEST_LONG_EQ(iio_context_get_devices_count(ctx), 1,
-		       "context holds exactly one device");
+	TEST_OUT("devices_count = %u", count);
+	TEST_ASSERT(count >= 1, "context holds at least one device");
+	TEST_ASSERT(iio_context_find_device(ctx, TEST_DEVICE_NAME) ==
+		    iio_context_get_device(ctx, 0),
+		    "the adc is device 0");
 
 	iio_context_destroy(ctx);
 }

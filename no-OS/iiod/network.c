@@ -16,7 +16,6 @@
 #include "lwip_socket.h"
 #include "tcp_socket.h"
 #include "parameters.h"
-#include "iio_adc.h"
 #include "iio_device.h"
 
 #define IIOD_PORT 30431
@@ -331,7 +330,6 @@ int noos_iiod_run(void)
 		.platform_ops = (const struct no_os_lwip_ops *)cfg.lwip_ops,
 		.mac_param = cfg.mac_param,
 	};
-	struct noos_iio_device_info adc_info;
 	int ret;
 
 	ret = no_os_uart_init(&console, &console_ip);
@@ -339,18 +337,6 @@ int noos_iiod_run(void)
 		return ret;
 
 	no_os_uart_stdio(console);
-
-	ret = iio_adc_init();
-	if (ret)
-		goto err_console;
-
-	ret = iio_adc_get_device_info(&adc_info);
-	if (ret)
-		goto err_console;
-
-	ret = noos_iio_register_device(&adc_info);
-	if (ret)
-		goto err_console;
 
 	memcpy(lwip_param.hwaddr, cfg.mac_addr, 6);
 

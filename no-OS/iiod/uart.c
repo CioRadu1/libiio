@@ -11,7 +11,6 @@
 #include <no_os_delay.h>
 #include <tinyiiod/tinyiiod.h>
 #include "parameters.h"
-#include "iio_adc.h"
 #include "iio_device.h"
 
 static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
@@ -104,28 +103,14 @@ int noos_iiod_run(void)
 		.platform_ops = UART_OPS,
 		.extra = UART_EXTRA,
 	};
-	struct noos_iio_device_info adc_info;
 	int ret;
 
 	ret = no_os_uart_init(&uart_desc, &uart_ip);
 	if (ret)
 		return ret;
 
-	ret = iio_adc_init();
-	if (ret)
-		goto err;
-
-	ret = iio_adc_get_device_info(&adc_info);
-	if (ret)
-		goto err;
-
-	ret = noos_iio_register_device(&adc_info);
-	if (ret)
-		goto err;
-
 	ret = iiod_uart_run(uart_desc);
 
-err:
 	no_os_uart_remove(uart_desc);
 
 	return ret;
