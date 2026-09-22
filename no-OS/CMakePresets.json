@@ -7,15 +7,18 @@
   },
   "configurePresets": [
     {
-      "name": "arm",
+      "name": "bare-metal",
       "hidden": true,
       "generator": "Ninja",
-      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake"
+      "toolchainFile": "${sourceDir}/cmake/bare-metal.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "uart",
       "displayName": "UART transport",
-      "inherits": "arm",
+      "inherits": "bare-metal",
       "binaryDir": "${sourceDir}/build-uart",
       "cacheVariables": {
         "WITH_IIOD_UART": "ON",
@@ -27,7 +30,7 @@
     {
       "name": "network",
       "displayName": "lwIP network transport",
-      "inherits": "arm",
+      "inherits": "bare-metal",
       "binaryDir": "${sourceDir}/build-network",
       "cacheVariables": {
         "WITH_IIOD_UART": "OFF",
@@ -39,12 +42,25 @@
     {
       "name": "usb",
       "displayName": "USB CDC-ACM transport",
-      "inherits": "arm",
+      "inherits": "bare-metal",
       "binaryDir": "${sourceDir}/build-usb",
       "cacheVariables": {
         "WITH_IIOD_UART": "OFF",
         "WITH_IIOD_NETWORK": "OFF",
         "WITH_IIOD_USB": "ON",
+        "WITH_LWIP_NETWORKING": "OFF"
+      }
+    },
+    {
+      "name": "game",
+      "displayName": "UART console game (no libiio)",
+      "inherits": "bare-metal",
+      "binaryDir": "${sourceDir}/build-game",
+      "cacheVariables": {
+        "WITH_GAME": "ON",
+        "WITH_IIOD_UART": "OFF",
+        "WITH_IIOD_NETWORK": "OFF",
+        "WITH_IIOD_USB": "OFF",
         "WITH_LWIP_NETWORKING": "OFF"
       }
     }
@@ -61,6 +77,15 @@
     {
       "name": "usb",
       "configurePreset": "usb"
+    },
+    {
+      "name": "game",
+      "configurePreset": "game"
+    },
+    {
+      "name": "flash-game",
+      "configurePreset": "game",
+      "targets": [ "flash" ]
     },
     {
       "name": "flash-uart",
@@ -98,6 +123,21 @@
       "steps": [
         { "type": "configure", "name": "usb" },
         { "type": "build", "name": "usb" }
+      ]
+    },
+    {
+      "name": "game",
+      "steps": [
+        { "type": "configure", "name": "game" },
+        { "type": "build", "name": "game" }
+      ]
+    },
+    {
+      "name": "flash-game",
+      "steps": [
+        { "type": "configure", "name": "game" },
+        { "type": "build", "name": "game" },
+        { "type": "build", "name": "flash-game" }
       ]
     },
     {
