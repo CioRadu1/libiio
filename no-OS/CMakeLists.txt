@@ -7,17 +7,23 @@ project(libiio-noos C ASM)
 # LIBIIO_DIR is now the parent directory (libiio root)
 set(LIBIIO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# The no-OS checkout: -DNOOS_DIR first, then the NOOS_DIR environment variable,
+# then the two conventional locations. Nothing here may name a personal
+# directory -- this has to configure on anyone's machine.
 if(NOT DEFINED NOOS_DIR AND DEFINED ENV{NOOS_DIR})
   set(NOOS_DIR "$ENV{NOOS_DIR}" CACHE PATH "no-OS source tree")
 endif()
 
+# This port lives inside the libiio tree as no-OS/, so "../no-OS" relative to
+# here is this very directory -- never a candidate. Only a checkout beside
+# libiio or under $HOME can be found without being told where it is.
 if(NOT DEFINED NOOS_DIR)
   foreach(candidate
-      "$ENV{HOME}/GitNo-OSPush/no-OS"
-      "$ENV{HOME}/no-OS"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../no-OS")
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../no-OS"
+      "$ENV{HOME}/no-OS")
     if(EXISTS "${candidate}/include/no_os_uart.h")
       set(NOOS_DIR "${candidate}" CACHE PATH "no-OS source tree")
+      set(NOOS_DIR_GUESSED TRUE)
       break()
     endif()
   endforeach()
@@ -29,7 +35,16 @@ if(NOT NOOS_DIR OR NOT EXISTS "${NOOS_DIR}/include/no_os_uart.h")
     "or export NOOS_DIR in your shell.")
 endif()
 
-message(STATUS "NOOS_DIR = ${NOOS_DIR}")
+get_filename_component(NOOS_DIR "${NOOS_DIR}" REALPATH)
+
+# Say when the tree was guessed: a machine with several no-OS checkouts would
+# otherwise switch trees silently.
+if(NOOS_DIR_GUESSED)
+  message(STATUS "NOOS_DIR = ${NOOS_DIR} (guessed -- export NOOS_DIR or pass "
+                 "-DNOOS_DIR to build against another checkout)")
+else()
+  message(STATUS "NOOS_DIR = ${NOOS_DIR}")
+endif()
 
 # ---------- libiio core sources ----------
 set(LIBIIO_SRCS
@@ -60,8 +75,16 @@ option(WITH_IIOD_UART    "Build UART transport"    ON)
 option(WITH_IIOD_NETWORK "Build network transport"  ON)
 option(WITH_IIOD_USB     "Build USB transport"     OFF)
 
+option(WITH_GAME "Build the UART console game instead of the IIOD server" OFF)
+
+if(WITH_GAME AND NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+  message(FATAL_ERROR
+    "WITH_GAME drives a board's UART console and has no host build. "
+    "Use cmake --preset game.")
+endif()
+
 option(WITH_IIOD_V0_COMPAT "Build v0 (ASCII) protocol compat for UART" ON)
-if(WITH_IIOD_V0_COMPAT AND WITH_IIOD_UART)
+if(WITH_IIOD_V0_COMPAT AND WITH_IIOD_UART AND NOT WITH_GAME)
   set(V0_COMPAT_ON 1)
 else()
   set(V0_COMPAT_ON 0)
@@ -110,9 +133,17 @@ set(IIO_ADC_SRCS
 )
 
 # ---------- Application ----------
-set(APP_SRCS
-  ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/src/main.c
-)
+# WITH_GAME swaps the whole application. The game is a standalone UART demo:
+# it needs the board and the no-OS HAL, but nothing from libiio, so the core,
+# the backend and the ADC driver are dropped from the target entirely.
+if(WITH_GAME)
+  set(APP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/samples/game/main.c)
+  set(LIBIIO_SRCS "")
+  set(NOOS_BACKEND_SRCS "")
+  set(IIO_ADC_SRCS "")
+else()
+  set(APP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/main.c)
+endif()
 
 # ---------- Include directories (common) ----------
 set(COMMON_INCLUDES
@@ -198,13 +229,24 @@ endif()
 ###############################################################################
 if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
 
-  set(BOARD max32690 CACHE STRING "Target board")
+  # BOARD, and the core it implies, are resolved by cmake/bare-metal.cmake
+  # before this file is read -- toolchain files run first, and the compiler
+  # flags depend on the board. Here we load the rest of the board description.
+  if(NOT DEFINED BOARD)
+    message(FATAL_ERROR
+      "BOARD is not set. Cross builds must go through the bare-metal "
+      "toolchain file: cmake --preset uart, or "
+      "cmake --toolchain cmake/bare-metal.cmake -DBOARD=max32690 ...")
+  endif()
+
+  message(STATUS "BOARD = ${BOARD} (${BOARD_ARCH})")
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boards/${BOARD}.cmake)
 
   set(ADC common_api CACHE STRING "ADC device HAL (defaults to the board's internal ADC)")
   set(BOARD_ADC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/adc/${ADC}.cmake)
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/adc/${ADC}.cmake)
+
+  if(WITH_GAME)
+    set(BOARD_ADC_SRC "")
   endif()
 
   option(WITH_LWIP_NETWORKING "Enable lwIP + ADIN1110 network transport" ON)
@@ -218,7 +260,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
       ${MAXUSB_DIR}/src/enumerate/enumerate.c
       ${MAXUSB_DIR}/src/devclass/cdc_acm.c
       ${PLATFORM_DIR}/maxim_usb_uart.c
-      ${NOOS_DIR}/util/no_os_lf256fifo.c
     )
     set(MAXUSB_INCLUDES
       ${MAXUSB_DIR}/include/core
@@ -232,6 +273,25 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     set(NET_CHIP adin1110 CACHE STRING "Ethernet netdev chip")
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/netdevs/${NET_CHIP}.cmake)
     set(LWIP_DIR ${NOOS_DIR}/libraries/lwip/lwip)
+
+    # no-OS ships the lwIP port glue (arch/cc.h, configs/lwipopts.h) under two
+    # different roots depending on the checkout's age. Same files either way.
+    foreach(glue "${NOOS_DIR}/libraries/lwip-glue" "${NOOS_DIR}/libraries/lwip")
+      if(EXISTS "${glue}/configs/lwipopts.h")
+        set(LWIP_GLUE_DIR "${glue}")
+        break()
+      endif()
+    endforeach()
+
+    if(NOT LWIP_GLUE_DIR)
+      message(FATAL_ERROR
+        "lwIP port glue not found under ${NOOS_DIR}/libraries. Looked for "
+        "lwip-glue/configs/lwipopts.h and lwip/configs/lwipopts.h. Update the "
+        "no-OS checkout (git submodule update --init) or build with "
+        "-DWITH_LWIP_NETWORKING=OFF.")
+    endif()
+
+    message(STATUS "lwIP glue = ${LWIP_GLUE_DIR}")
     if(NOT DEFINED NO_OS_IP)
       set(NO_OS_IP "192.0.2.1")
     endif()
@@ -297,18 +357,25 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     ${COMMON_INCLUDES}
     ${BOARD_INCLUDES}
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/src/platform/${BOARD_PLATFORM_NAME}
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/${BOARD_PLATFORM_NAME}
 
     ${MAXUSB_INCLUDES}
-    ${NET_CHIP_INCLUDES}
-
-    ${LWIP_DIR}/src/include
-    ${LWIP_DIR}/src/include/compat
-    ${LWIP_DIR}/src/include/netif
-    ${NOOS_DIR}/libraries/lwip-glue/configs
-    ${NOOS_DIR}/libraries/lwip-glue
-    ${NOOS_DIR}/network/lwip_raw_socket
   )
+
+  # LWIP_DIR and LWIP_GLUE_DIR are empty unless lwIP is on, and an empty prefix
+  # would put /src/include and /configs on every other build's include path.
+  if(WITH_LWIP_NETWORKING)
+    target_include_directories(libiio-noos PRIVATE
+      ${NET_CHIP_INCLUDES}
+
+      ${LWIP_DIR}/src/include
+      ${LWIP_DIR}/src/include/compat
+      ${LWIP_DIR}/src/include/netif
+      ${LWIP_GLUE_DIR}/configs
+      ${LWIP_GLUE_DIR}
+      ${NOOS_DIR}/network/lwip_raw_socket
+    )
+  endif()
 
   target_compile_definitions(libiio-noos PRIVATE
     ${COMMON_DEFS}
@@ -334,8 +401,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     )
   endif()
 
-  target_compile_options(libiio-noos PRIVATE -Wall -Og -g)
-
   target_link_options(libiio-noos PRIVATE
     -T${BOARD_LINKER_SCRIPT}
     -Wl,--entry=Reset_Handler
@@ -350,37 +415,29 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     COMMENT "Generating .bin and .hex"
   )
 
-  # --- Flash: OpenOCD, target config picked from ${BOARD} at configure time ---
-  find_program(OPENOCD openocd
-    HINTS
-      "$ENV{MAXIM_PATH}/Tools/OpenOCD"
-      "$ENV{HOME}/MaximSDK/Tools/OpenOCD"
-    DOC "OpenOCD executable used by the flash target"
-  )
-
-  set(FLASH_ERROR "")
-  if(NOT OPENOCD)
-    set(FLASH_ERROR "OpenOCD not found. Set MAXIM_PATH to your MaximSDK root.")
-  else()
-    get_filename_component(OPENOCD_BIN_DIR ${OPENOCD} DIRECTORY)
-    set(OPENOCD_SCRIPTS ${OPENOCD_BIN_DIR}/scripts)
-    if(NOT EXISTS ${OPENOCD_SCRIPTS}/target/${BOARD}.cfg)
-      set(FLASH_ERROR "no OpenOCD target config for board '${BOARD}' in ${OPENOCD_SCRIPTS}/target")
-    endif()
+  # --- Flash ---
+  # Which tool flashes a board is vendor knowledge, so the recipe comes from
+  # cmake/platforms/<vendor>.cmake as BOARD_FLASH_COMMAND, with @FLASH_IMAGE@
+  # standing in for the image this build produces. A platform that cannot flash
+  # sets BOARD_FLASH_ERROR instead, and the target reports it when invoked
+  # rather than failing the configure -- building without a probe attached is
+  # normal.
+  if(NOT BOARD_FLASH_COMMAND AND NOT BOARD_FLASH_ERROR)
+    set(BOARD_FLASH_ERROR
+        "platform '${BOARD_PLATFORM_NAME}' defines no flash command")
   endif()
 
-  if(FLASH_ERROR)
+  if(BOARD_FLASH_ERROR)
     add_custom_target(flash
-      COMMAND ${CMAKE_COMMAND} -E echo "ERROR: ${FLASH_ERROR}"
+      COMMAND ${CMAKE_COMMAND} -E echo "ERROR: ${BOARD_FLASH_ERROR}"
       COMMAND ${CMAKE_COMMAND} -E false
       VERBATIM
     )
   else()
+    string(REPLACE "@FLASH_IMAGE@" "libiio-noos.hex"
+           FLASH_COMMAND "${BOARD_FLASH_COMMAND}")
     add_custom_target(flash
-      COMMAND ${OPENOCD} -s ${OPENOCD_SCRIPTS}
-              -f interface/cmsis-dap.cfg
-              -f target/${BOARD}.cfg
-              -c "program libiio-noos.hex verify reset exit"
+      COMMAND ${FLASH_COMMAND}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
       COMMENT "Flashing libiio-noos.hex to ${BOARD}"
       USES_TERMINAL
