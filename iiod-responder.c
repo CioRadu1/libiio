@@ -213,6 +213,58 @@ static int iiod_discard_data(struct iiod_responder *priv, size_t bytes)
 	return 0;
 }
 
+#define IIOD_SHORT_READ_CHUNK 512
+
+static ssize_t iiod_read_response_data(struct iiod_responder *priv,
+		const struct iiod_buf *buf, size_t nb, size_t bytes)
+{
+	char scratch[IIOD_SHORT_READ_CHUNK];
+	size_t i, total = 0, left, chunk, pos, copied = 0;
+	size_t dst_idx = 0, dst_off = 0;
+	struct iiod_buf tmp;
+	ssize_t ret;
+
+	for (i = 0; i < nb; i++)
+		total += buf[i].size;
+
+	if (total >= bytes)
+		return iiod_rw_all(priv, NULL, buf, nb, bytes, true, false);
+
+	for (left = bytes; left; left -= chunk) {
+		chunk = left > sizeof(scratch) ? sizeof(scratch) : left;
+
+		tmp.ptr = scratch;
+		tmp.size = chunk;
+
+		ret = iiod_rw_all(priv, NULL, &tmp, 1, chunk, true, false);
+		if (ret <= 0)
+			return copied ? (ssize_t)copied : ret;
+
+		chunk = (size_t)ret;
+
+		for (pos = 0; pos < chunk && dst_idx < nb; ) {
+			size_t room = buf[dst_idx].size - dst_off;
+
+			if (room > chunk - pos)
+				room = chunk - pos;
+
+			memcpy((char *)buf[dst_idx].ptr + dst_off,
+			       scratch + pos, room);
+
+			pos += room;
+			dst_off += room;
+			copied += room;
+
+			if (dst_off == buf[dst_idx].size) {
+				dst_idx++;
+				dst_off = 0;
+			}
+		}
+	}
+
+	return (ssize_t)(copied ? copied : bytes);
+}
+
 int iiod_command_data_read(struct iiod_command_data *data, const struct iiod_buf *buf)
 {
 	struct iiod_responder *priv = (struct iiod_responder *)data;
@@ -333,12 +385,8 @@ iiod_responder_do_step(struct iiod_responder *priv)
 	iio_mutex_unlock(priv->lock);
 
 	if (io->r_io.nb_buf && cmd.code > 0) {
-		ret = iiod_rw_all(priv, NULL, io->r_io.buf, io->r_io.nb_buf,
-				  cmd.code, true, false);
-
-		if (ret > 0 && (size_t)ret < (size_t)cmd.code)
-			iiod_discard_data(priv, cmd.code - ret);
-
+		ret = iiod_read_response_data(priv, io->r_io.buf,
+					      io->r_io.nb_buf, cmd.code);
 		if (ret <= 0) {
 			iio_mutex_lock(priv->lock);
 			iiod_responder_signal_io(io, (int32_t)ret);
