@@ -8,8 +8,6 @@
 #define IIOD_PARAMETERS_H
 
 /* ---------- UART ---------- */
-#if !defined(NO_OS_USB_TRANSPORT)
-
 #include "maxim_uart.h"
 #include "maxim_uart_stdio.h"
 
@@ -22,7 +20,23 @@ static struct max_uart_init_param iiod_uart_extra = {
 };
 #define UART_EXTRA		&iiod_uart_extra
 
-#endif /* UART transport */
+/* ---------- USB service tick ---------- */
+#ifdef NO_OS_USB_TRANSPORT
+
+#include "maxim_timer.h"
+#include "maxim_irq.h"
+
+#define USB_TICK_TIMER_ID	0
+#define USB_TICK_TIMER_FREQ_HZ	1000000
+#define USB_TICK_TIMER_TICKS	100
+#define USB_TICK_TIMER_OPS	&max_timer_ops
+#define USB_TICK_TIMER_EXTRA	NULL
+#define USB_TICK_IRQ_OPS	&max_irq_ops
+#define USB_TICK_IRQ_ID		TMR0_IRQn
+#define USB_TICK_IRQ_HANDLE	MXC_TMR0
+#define USB_TICK_IRQ_PRIORITY	3
+
+#endif /* NO_OS_USB_TRANSPORT */
 
 /* ---------- Network (board wiring; chip binding in NETDEV_HEADER) ---------- */
 #ifdef NO_OS_LWIP_NETWORKING
