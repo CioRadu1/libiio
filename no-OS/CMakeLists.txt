@@ -372,9 +372,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
     target_compile_definitions(libiio-noos PRIVATE
       NO_OS_LWIP_NETWORKING
       LWIP_PROVIDE_ERRNO
-      CONFIG_NO_OS_IP="${NO_OS_IP}"
-      CONFIG_NO_OS_NETMASK="${NO_OS_NETMASK}"
-      CONFIG_NO_OS_GATEWAY="${NO_OS_GATEWAY}"
+      NO_OS_IP="${NO_OS_IP}"
+      NO_OS_NETMASK="${NO_OS_NETMASK}"
+      NO_OS_GATEWAY="${NO_OS_GATEWAY}"
       NETDEV_HEADER="${NET_CHIP_HEADER}"
     )
   endif()
