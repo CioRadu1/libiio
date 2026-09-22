@@ -10,20 +10,15 @@
 #include "iio_adc_hal.h"
 #include "adc.h"
 
-#ifdef MAX_ADC_SLOT_NUM
-#define MAXIM_ADC_REVB 1
-#else
-#define MAXIM_ADC_REVB 0
-#endif
+#define MAXIM_ADC_REVB MAX_ADC_SLOT_NUM
+#define MAXIM_ADC_REVA !MAXIM_ADC_REVB
 
 #if MAXIM_ADC_REVB
 
 #define MAXIM_ADC_RESOLUTION_BITS 12
 
-#ifdef MAX32662
-#define MAXIM_ADC_CLOCK MXC_ADC_CLK_ADC1
-#else
-#define MAXIM_ADC_CLOCK MXC_ADC_CLK_IBRO
+#ifndef IIO_ADC_CLOCK
+#error "define IIO_ADC_CLOCK in cmake/boards/<board>.cmake"
 #endif
 
 #ifndef IIO_ADC_REF_VOLTAGE_MV
@@ -60,7 +55,7 @@
 #error "IIO_ADC_NUM_CHANNELS out of range 1..IIO_ADC_MAX_CHANNELS"
 #endif
 
-#if !MAXIM_ADC_REVB && IIO_ADC_NUM_CHANNELS > MAXIM_ADC_AIN_COUNT
+#if MAXIM_ADC_REVA && IIO_ADC_NUM_CHANNELS > MAXIM_ADC_AIN_COUNT
 #error "IIO_ADC_NUM_CHANNELS exceeds the AIN count of this part"
 #endif
 

@@ -41,7 +41,7 @@ static const char *const maxim_adc_channels[IIO_ADC_NUM_CHANNELS] = {
 static int maxim_adc_init(void)
 {
 	mxc_adc_req_t adc_cfg = {
-		.clock = MAXIM_ADC_CLOCK,
+		.clock = IIO_ADC_CLOCK,
 		.clkdiv = MXC_ADC_CLKDIV_4,
 		.cal = MXC_ADC_SKIP_CAL,
 		.ref = MXC_ADC_REF_INT_1V25,
