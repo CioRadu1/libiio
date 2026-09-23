@@ -156,6 +156,7 @@ set(COMMON_DEFS
   WITH_EXTERNAL_BACKEND=1
   WITH_IIOD_USB_DMABUF=0
   WITH_IIOD_V0_COMPAT=${V0_COMPAT_ON}
+  WITH_TINYIIOD_ASCII=${V0_COMPAT_ON}
   WITH_LOCAL_BACKEND=0
   WITH_NETWORK_BACKEND=0
   WITH_SERIAL_BACKEND=0
@@ -186,6 +187,11 @@ if(V0_COMPAT_ON)
   set(V0_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/v0-compat)
   file(MAKE_DIRECTORY ${V0_GEN_DIR})
 
+  file(WRITE ${V0_GEN_DIR}/lexer-prologue.l "%option always-interactive\n")
+
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/iio-config.h
+                 ${CMAKE_CURRENT_BINARY_DIR}/iio-config.h COPYONLY)
+
   add_custom_command(
     OUTPUT  ${V0_GEN_DIR}/parser.c ${V0_GEN_DIR}/parser.h
     COMMAND ${BISON_EXECUTABLE} -d -o ${V0_GEN_DIR}/parser.c ${LIBIIO_DIR}/iiod/parser.y
@@ -194,7 +200,9 @@ if(V0_COMPAT_ON)
   )
   add_custom_command(
     OUTPUT  ${V0_GEN_DIR}/lexer.c
-    COMMAND ${FLEX_EXECUTABLE} -o ${V0_GEN_DIR}/lexer.c ${LIBIIO_DIR}/iiod/lexer.l
+    COMMAND ${FLEX_EXECUTABLE} -o ${V0_GEN_DIR}/lexer.c
+            ${V0_GEN_DIR}/lexer-prologue.l
+            ${LIBIIO_DIR}/iiod/lexer.l
     DEPENDS ${LIBIIO_DIR}/iiod/lexer.l ${V0_GEN_DIR}/parser.h
     COMMENT "flex: iiod/lexer.l"
   )

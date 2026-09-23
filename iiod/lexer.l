@@ -13,7 +13,7 @@
 #include <string.h>
 %}
 
-%option noyywrap reentrant bison-bridge nounistd nounput noinput always-interactive
+%option noyywrap reentrant bison-bridge nounistd nounput noinput
 
 WORD (([[:alpha:]]+,)|(iio:))?(-|_|\.|[[:alnum:]])+
 

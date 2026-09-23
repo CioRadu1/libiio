@@ -12,6 +12,10 @@
 #include "../iiod/ops.h"
 #include "tinyiiod.h"
 
+#ifndef WITH_TINYIIOD_ASCII
+#define WITH_TINYIIOD_ASCII 0
+#endif
+
 #define container_of(ptr, type, member) \
 	((type *)(void *)((uintptr_t)(ptr) - offsetof(type, member)))
 
@@ -205,7 +209,7 @@ int iiod_interpreter(struct iio_context *ctx, struct iiod_pdata *pdata,
 			.xml_zstd_len = xml_zstd_len,
 			.readfd = iiod_readfd,
 			.writefd = iiod_writefd,
-			.binary = !WITH_IIOD_V0_COMPAT,
+			.binary = !WITH_TINYIIOD_ASCII,
 		},
 		.read_cb = read_cb,
 		.write_cb = write_cb,
@@ -217,7 +221,7 @@ int iiod_interpreter(struct iio_context *ctx, struct iiod_pdata *pdata,
 	if (!iiod_locks_created || !buflist_lock || !evlist_lock)
 		return -EINVAL;
 
-#if WITH_IIOD_V0_COMPAT
+#if WITH_TINYIIOD_ASCII
 	ascii_interpreter(&iiod_ctx.parser_pdata);
 #endif
 	if (iiod_ctx.parser_pdata.binary)
