@@ -35,8 +35,6 @@ struct iio_usb_ep_couple {
 	const struct iio_device *dev;
 };
 
-#define USB_RD_STASH_SIZE 1024
-
 struct iiod_client_pdata {
 	struct iio_usb_ep_couple *ep;
 	struct iiod_client *iiod_client;
@@ -46,9 +44,6 @@ struct iiod_client_pdata {
 	struct libusb_transfer *transfer;
 
 	struct iio_context_pdata *ctx_pdata;
-
-	char stash[USB_RD_STASH_SIZE];
-	size_t stash_len, stash_off;
 };
 
 struct iio_context_pdata {
@@ -119,8 +114,6 @@ static void usb_cancel(struct iiod_client_pdata *io_ctx);
 
 static int usb_io_context_init(struct iiod_client_pdata *io_ctx)
 {
-	io_ctx->stash_len = 0;
-	io_ctx->stash_off = 0;
 	io_ctx->lock = iio_mutex_create();
 
 	return iio_err(io_ctx->lock);
@@ -727,53 +720,16 @@ static ssize_t write_data_sync(
 		return (ssize_t)transferred;
 }
 
-static size_t read_from_stash(struct iiod_client_pdata *ep, char *buf, size_t len)
-{
-	size_t avail = ep->stash_len - ep->stash_off;
-
-	if (avail > len)
-		avail = len;
-
-	memcpy(buf, ep->stash + ep->stash_off, avail);
-
-	ep->stash_off += avail;
-	if (ep->stash_off == ep->stash_len)
-		ep->stash_len = ep->stash_off = 0;
-
-	return avail;
-}
-
 static ssize_t read_data_sync(struct iiod_client_pdata *ep, char *buf, size_t len, int timeout_ms)
 {
 	int transferred, ret;
 
-	if (!len)
-		return 0;
-
-	if (ep->stash_len)
-		return (ssize_t)read_from_stash(ep, buf, len);
-
-	if (len >= sizeof(ep->stash)) {
-		ret = usb_sync_transfer(ep->ctx_pdata, ep, LIBUSB_ENDPOINT_IN, buf, len,
-					&transferred, timeout_ms);
-		if (ret)
-			return ret;
-
-		return transferred;
-	}
-
-	ret = usb_sync_transfer(ep->ctx_pdata, ep, LIBUSB_ENDPOINT_IN, ep->stash,
-				sizeof(ep->stash), &transferred, timeout_ms);
+	ret = usb_sync_transfer(
+			ep->ctx_pdata, ep, LIBUSB_ENDPOINT_IN, buf, len, &transferred, timeout_ms);
 	if (ret)
 		return ret;
-
-	if (transferred <= 0)
+	else
 		return transferred;
-
-	ep->stash_len = (size_t)transferred;
-	ep->stash_off = 0;
-
-	return (ssize_t)read_from_stash(ep, buf, len);
 }
 
 static int usb_verify_eps(const struct libusb_interface_descriptor *iface)
