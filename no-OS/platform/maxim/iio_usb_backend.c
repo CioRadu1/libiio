@@ -70,7 +70,9 @@ static uint8_t pipe_ep_out(unsigned int pipe)
 
 static bool usb_irq_lock(void)
 {
-	bool enabled = NVIC_GetEnableIRQ(USB_IRQn) != 0;
+	/* NVIC->ISER, not NVIC_GetEnableIRQ(): CMSIS 4 headers lack it. */
+	uint32_t irq = (uint32_t)USB_IRQn;
+	bool enabled = (NVIC->ISER[irq >> 5] >> (irq & 0x1f)) & 1u;
 
 	NVIC_DisableIRQ(USB_IRQn);
 
