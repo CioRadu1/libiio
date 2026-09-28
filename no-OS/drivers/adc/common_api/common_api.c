@@ -63,6 +63,7 @@ static int maxim_adc_read_raw(unsigned int channel, int *value)
 		.avg_number = MXC_ADC_AVG_1,
 		.num_slots = 1,
 	};
+	int fifo[MAX_ADC_FIFO_LEN];
 	volatile uint32_t timeout;
 	int ret;
 
@@ -94,16 +95,27 @@ static int maxim_adc_read_raw(unsigned int channel, int *value)
 	}
 
 	MXC_ADC_ClearFlags(MXC_F_ADC_INTFL_SEQ_DONE);
+	MXC_ADC_DisableConversion();
 
-	ret = MXC_ADC_GetData(value);
-	if (ret > 0)
-		ret = 0;
+	/*
+	 * MXC_ADC_GetData() copies every word the FIFO holds, and it can hold
+	 * more than the one conversion asked for: give it room for all of them
+	 * and keep the first, or the extra words land past the caller's int.
+	 * The conversion is stopped first so the level cannot grow meanwhile.
+	 */
+	if (MXC_ADC_FIFO_Level() > MAX_ADC_FIFO_LEN)
+		return -EIO;
 
-	*value &= MAXIM_ADC_RAW_MASK;
+	ret = MXC_ADC_GetData(fifo);
+	if (ret <= 0)
+		return ret ? ret : -EIO;
+
+	*value = fifo[0] & MAXIM_ADC_RAW_MASK;
+
+	return 0;
 
 out_disable:
 	MXC_ADC_DisableConversion();
-
 out:
 	return ret;
 }
