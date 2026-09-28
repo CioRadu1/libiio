@@ -47,9 +47,14 @@
 
 #define USB_TICK_HZ		(USB_TICK_TIMER_FREQ_HZ / USB_TICK_TIMER_TICKS)
 #define USB_IO_TIMEOUT_TICKS	(USB_TICK_HZ * 10)
+/* How long a data pipe may hold a response back while pipe 0 has a command. */
+#define USB_STALL_TICKS		(USB_TICK_HZ / 5)
 
 struct iio_usb_pipe {
 	volatile bool		open;
+	/* The host gave up on this data pipe (a cancelled stream): its
+	 * commands are dropped and its responses fail until it is reopened. */
+	volatile bool		stalled;
 	volatile uint32_t	open_seq;
 	volatile bool		rx_pending;
 	volatile int		rx_err;
@@ -58,8 +63,6 @@ struct iio_usb_pipe {
 	volatile bool		tx_done;
 	volatile int		tx_err;
 	volatile uint32_t	tx_actual;
-	struct iiod_interp	*interp;
-	uint32_t		interp_seq;
 	uint8_t			rx_chunk[IIO_USB_MAX_PACKET]
 	__attribute__((aligned(4)));
 	uint8_t			rx_ring[IIO_USB_RX_RING_SIZE];
@@ -69,6 +72,16 @@ static struct iio_usb_pipe pipes[IIO_USB_NUM_PIPES];
 
 static volatile int configured;
 static volatile uint32_t usb_ticks;
+
+/*
+ * One interpreter serves every pipe. A read with no command in progress waits
+ * on all open pipes and takes the first one with data; the rest of that
+ * command (payload reads and the response) then stays on the same pipe until
+ * the response is written.
+ */
+static unsigned int cur_pipe;
+static bool pipe_locked;
+static uint32_t session_seq;
 
 static struct no_os_timer_desc *tick_timer;
 static struct no_os_irq_ctrl_desc *tick_irq;
@@ -196,6 +209,13 @@ void iio_usb_on_ctrl(unsigned int req, unsigned int pipe)
 		break;
 
 	case IIO_USB_CTRL_OPEN_PIPE:
+		/* A new session on this pipe: drop what the old one left. */
+		pipe_cancel(pipe);
+		p->rx_head = 0;
+		p->rx_tail = 0;
+		p->rx_err = 0;
+		p->tx_err = 0;
+		p->stalled = false;
 		p->open_seq++;
 		p->open = true;
 		break;
@@ -215,7 +235,8 @@ static void pipe_submit_rx(unsigned int index)
 	struct iio_usb_pipe *p = &pipes[index];
 	uint16_t mps = iio_usb_ops.max_packet();
 
-	if (!configured || !p->open || !p->interp || p->rx_pending || p->rx_err)
+	if (!configured || !p->open || p->stalled || p->rx_pending ||
+	    p->rx_err)
 		return;
 
 	if (ring_free(p) < mps)
@@ -242,21 +263,98 @@ static void usb_tick_cb(void *ctx)
 		pipe_submit_rx(i);
 }
 
+static bool session_alive(void)
+{
+	return configured && pipes[0].open && pipes[0].open_seq == session_seq;
+}
+
+static bool pipe_usable(const struct iio_usb_pipe *p)
+{
+	return session_alive() && p->open;
+}
+
+/*
+ * Drop a data pipe the host no longer services, e.g. after it cancelled a
+ * stream: whatever it still holds is discarded, and the session carries on
+ * over pipe 0, where the host sends the commands that free the buffer.
+ */
+static void pipe_stall(unsigned int index)
+{
+	struct iio_usb_pipe *p = &pipes[index];
+
+	p->stalled = true;
+	pipe_cancel(index);
+	iio_usb_ops.flush(index);
+
+	p->rx_tail = p->rx_head;
+	p->rx_err = 0;
+}
+
+/* Wait until an open pipe has data or an error to report, and pick it. */
+static int pipe_wait_any(unsigned int *index)
+{
+	unsigned int i;
+
+	while (session_alive()) {
+		for (i = 0; i < IIO_USB_NUM_PIPES; i++) {
+			const struct iio_usb_pipe *p = &pipes[i];
+
+			if (!p->open || p->stalled)
+				continue;
+
+			/* An error on a data pipe ends that pipe, not the
+			 * session. */
+			if (i && p->rx_err) {
+				pipe_stall(i);
+				continue;
+			}
+
+			if (ring_used(p) || p->rx_err) {
+				*index = i;
+				return 0;
+			}
+		}
+	}
+
+	return -ENODEV;
+}
+
 static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
-	struct iio_usb_pipe *p = (struct iio_usb_pipe *)pdata;
 	uint8_t *dst = (uint8_t *)buf;
-	uint32_t start = usb_ticks;
+	struct iio_usb_pipe *p;
+	bool fresh = false;
+	uint32_t start;
 	size_t total = 0;
+	int ret;
+
+again:
+	if (!pipe_locked) {
+		ret = pipe_wait_any(&cur_pipe);
+		if (ret)
+			return ret;
+
+		pipe_locked = true;
+		fresh = true;
+	}
+
+	p = &pipes[cur_pipe];
+	start = usb_ticks;
 
 	while (total < size) {
 		uint32_t n;
 
-		if (!configured || !p->open)
-			return -ENODEV;
+		if (!pipe_usable(p) || p->rx_err) {
+			int err = pipe_usable(p) ? p->rx_err : -ENODEV;
 
-		if (p->rx_err) {
-			int err = p->rx_err;
+			/* Nothing of the command consumed yet: a data pipe
+			 * going away drops it, and the next command may come
+			 * from another pipe. */
+			if (fresh && cur_pipe && !total && session_alive()) {
+				pipe_stall(cur_pipe);
+				pipe_locked = false;
+				goto again;
+			}
 
 			p->rx_err = 0;
 			return err;
@@ -269,9 +367,6 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 			continue;
 		}
 
-		if (!total)
-			return -EAGAIN;
-
 		if (usb_ticks - start >= USB_IO_TIMEOUT_TICKS)
 			return -ETIMEDOUT;
 	}
@@ -282,14 +377,20 @@ static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 			      size_t size)
 {
-	struct iio_usb_pipe *p = (struct iio_usb_pipe *)pdata;
-	unsigned int index = (unsigned int)(p - pipes);
+	unsigned int index = cur_pipe;
+	struct iio_usb_pipe *p = &pipes[index];
 	uint32_t total = 0;
+
+	/* The response ends the command; the next read may pick any pipe. */
+	pipe_locked = false;
+
+	if (p->stalled)
+		return -EPIPE;
 
 	while (total < size) {
 		uint32_t start;
 
-		if (!configured || !p->open)
+		if (!pipe_usable(p))
 			return -ENODEV;
 
 		p->tx_done = false;
@@ -305,9 +406,18 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 		start = usb_ticks;
 
 		while (!p->tx_done) {
-			if (!configured || !p->open) {
+			if (!pipe_usable(p)) {
 				pipe_cancel(index);
 				return -ENODEV;
+			}
+
+			/* A host that cancelled the stream stops reading the
+			 * data pipe, and sends the teardown on pipe 0: serve
+			 * that instead of waiting out the full timeout. */
+			if (index && ring_used(&pipes[0]) &&
+			    usb_ticks - start >= USB_STALL_TICKS) {
+				pipe_stall(index);
+				return -EPIPE;
 			}
 
 			if (usb_ticks - start >= USB_IO_TIMEOUT_TICKS) {
@@ -327,40 +437,28 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 	return (ssize_t)size;
 }
 
-static void pipe_stop(unsigned int index)
+/* Close every pipe the finished session still holds and drop their data. */
+static void session_close(void)
 {
-	struct iio_usb_pipe *p = &pipes[index];
-	struct iiod_interp *interp = p->interp;
+	unsigned int i;
 
-	p->interp = NULL;
-	pipe_cancel(index);
-	iio_usb_ops.flush(index);
+	for (i = 0; i < IIO_USB_NUM_PIPES; i++) {
+		struct iio_usb_pipe *p = &pipes[i];
 
-	if (interp)
-		iiod_interpreter_destroy(interp);
+		/* The host reopened pipe 0 meanwhile: that is the next session. */
+		if (i == 0 && p->open_seq != session_seq)
+			continue;
 
-	p->rx_pending = false;
-	p->rx_head = 0;
-	p->rx_tail = 0;
-	p->rx_err = 0;
-	p->tx_err = 0;
-}
+		p->open = false;
+		pipe_cancel(i);
+		iio_usb_ops.flush(i);
 
-static int pipe_start(unsigned int index, struct iio_context *ctx,
-		      const char *xml, size_t xml_len)
-{
-	struct iio_usb_pipe *p = &pipes[index];
-
-	pipe_stop(index);
-
-	p->interp_seq = p->open_seq;
-	p->interp = iiod_interpreter_create(ctx, (struct iiod_pdata *)p,
-					    iiod_usb_read, iiod_usb_write,
-					    xml, xml_len);
-	if (!p->interp)
-		return -ENOMEM;
-
-	return 0;
+		p->rx_head = 0;
+		p->rx_tail = 0;
+		p->rx_err = 0;
+		p->tx_err = 0;
+		p->stalled = false;
+	}
 }
 
 static int usb_tick_init(void)
@@ -433,8 +531,6 @@ int iiod_usb_run(void)
 	};
 	struct iio_context_params ctx_params = {0};
 	struct iio_context *ctx;
-	struct iio_usb_pipe *p;
-	unsigned int i;
 	char *xml;
 	size_t xml_len;
 	int ret;
@@ -481,38 +577,22 @@ int iiod_usb_run(void)
 	pr_info("IIO context ready (%u bytes XML)\n", (unsigned int)xml_len);
 
 	while (1) {
-		for (i = 0; i < IIO_USB_NUM_PIPES; i++) {
-			p = &pipes[i];
+		/* A session starts when the host opens pipe 0. */
+		while (!configured || !pipes[0].open)
+			;
 
-			if (p->open && (!p->interp ||
-					p->interp_seq != p->open_seq)) {
-				ret = pipe_start(i, ctx, xml, xml_len);
-				if (ret) {
-					pr_err("USB: pipe %u start failed: %d\n",
-					       i, ret);
-					p->open = false;
-					continue;
-				}
-				pr_info("USB: pipe %u session started\n", i);
-			}
+		session_seq = pipes[0].open_seq;
+		cur_pipe = 0;
+		pipe_locked = false;
 
-			if (!p->interp)
-				continue;
+		pr_info("USB: session started\n");
 
-			if (!p->open || !configured) {
-				pipe_stop(i);
-				pr_info("USB: pipe %u session ended\n", i);
-				continue;
-			}
+		iiod_interpreter(ctx, (struct iiod_pdata *)pipes,
+				 iiod_usb_read, iiod_usb_write, xml, xml_len);
 
-			ret = iiod_interpreter_step(p->interp);
-			if (ret < 0) {
-				pr_info("USB: pipe %u interpreter exited: %d\n",
-					i, ret);
-				p->open = false;
-				pipe_stop(i);
-			}
-		}
+		pr_info("USB: session ended\n");
+
+		session_close();
 	}
 
 remove_usb:
