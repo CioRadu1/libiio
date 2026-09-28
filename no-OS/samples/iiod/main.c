@@ -16,6 +16,7 @@
 #include <iio/iio-backend.h>
 
 #include "iio_adc.h"
+#include "iio_trigger_timer.h"
 #include "iio_device.h"
 
 #define GAME_W			22
@@ -370,16 +371,12 @@ static int snake_get_device_info(struct noos_iio_device_info *info)
 	if (!info)
 		return -EINVAL;
 
-	info->name = "snake";
-	info->dev = NULL;
-	info->direction = 0;
-	info->add_channels = snake_add_attrs;
-	info->read_attr = snake_read_attr;
-	info->write_attr = snake_write_attr;
-	info->read_samples = NULL;
-	info->write_samples = NULL;
-	info->reg_read = NULL;
-	info->reg_write = NULL;
+	*info = (struct noos_iio_device_info) {
+		.name = "snake",
+		.add_channels = snake_add_attrs,
+		.read_attr = snake_read_attr,
+		.write_attr = snake_write_attr,
+	};
 
 	return 0;
 }
@@ -394,6 +391,15 @@ static int noos_register_devices(void)
 		return ret;
 
 	ret = iio_adc_get_device_info(&info);
+	if (ret)
+		return ret;
+
+	ret = noos_iio_register_device(&info);
+	if (ret)
+		return ret;
+
+	/* Paces the ADC buffer; iio-adc names it as its trigger. */
+	ret = iio_trigger_timer_get_device_info(&info);
 	if (ret)
 		return ret;
 
