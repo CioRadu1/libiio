@@ -8,6 +8,7 @@
 #define NOOS_INCLUDE_IIO_DEVICE_H_
 
 #include <iio/iio.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -35,9 +36,23 @@ typedef int (*noos_iio_write_attr_t)(void *dev,
 		const struct iio_attr *attr,
 		const char *src, size_t len);
 
-typedef int (*noos_iio_read_samples_t)(void *dev, void *data, size_t bytes);
-typedef int (*noos_iio_write_samples_t)(void *dev, const void *data,
-					size_t bytes);
+/*
+ * Sample transfer, same arguments as the Zephyr readbuf/writebuf: @mask says
+ * which scan elements the client enabled, and @data holds whole samples laid
+ * out as iio_device_get_sample_size() describes -- the enabled channels only,
+ * in channel order, each at its own format.
+ */
+typedef int (*noos_iio_read_samples_t)(void *dev,
+		const struct iio_device *iio_device,
+		const struct iio_channels_mask *mask,
+		void *data, size_t bytes);
+typedef int (*noos_iio_write_samples_t)(void *dev,
+		const struct iio_device *iio_device,
+		const struct iio_channels_mask *mask,
+		const void *data, size_t bytes);
+
+/* Buffer enabled or disabled by the client. */
+typedef int (*noos_iio_enable_buffer_t)(void *dev, bool enable);
 
 typedef int (*noos_iio_reg_read_t)(void *dev, uint32_t reg, uint32_t *val);
 typedef int (*noos_iio_reg_write_t)(void *dev, uint32_t reg, uint32_t val);
@@ -52,8 +67,15 @@ typedef int (*noos_iio_reg_write_t)(void *dev, uint32_t reg, uint32_t val);
  * @write_attr:    write an attribute value (may be NULL)
  * @read_samples:  read sample data from hardware (RX, may be NULL)
  * @write_samples: write sample data to hardware (TX, may be NULL)
+ * @enable_buffer: buffer enabled / disabled (may be NULL)
  * @reg_read:      read a device register (may be NULL)
  * @reg_write:     write a device register (may be NULL)
+ * @is_trigger:    the device is a trigger: it gets a "triggerN" id and must
+ *                 have no channels
+ * @trigger:       name of the registered trigger that paces this device's
+ *                 buffer (may be NULL)
+ *
+ * Fill it with a designated initializer so the fields left out are zero.
  */
 struct noos_iio_device_info {
 	const char *name;
@@ -64,8 +86,11 @@ struct noos_iio_device_info {
 	noos_iio_write_attr_t write_attr;
 	noos_iio_read_samples_t read_samples;
 	noos_iio_write_samples_t write_samples;
+	noos_iio_enable_buffer_t enable_buffer;
 	noos_iio_reg_read_t reg_read;
 	noos_iio_reg_write_t reg_write;
+	bool is_trigger;
+	const char *trigger;
 };
 
 /**

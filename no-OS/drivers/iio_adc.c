@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include "iio_adc.h"
 #include "iio_adc_hal.h"
+#include "iio_trigger_timer.h"
 #include <iio/iio-backend.h>
 
 static const char *const gain_values[] = {
@@ -65,6 +66,16 @@ static struct adc_channel_state chan_state[IIO_ADC_MAX_CHANNELS];
 static int adc_emit_int(char *dst, size_t len, int val)
 {
 	int ret = snprintf(dst, len, "%d", val);
+
+	if (ret < 0 || (size_t)ret >= len)
+		return -EINVAL;
+
+	return ret + 1;
+}
+
+static int adc_emit_str(char *dst, size_t len, const char *val)
+{
+	int ret = snprintf(dst, len, "%s", val);
 
 	if (ret < 0 || (size_t)ret >= len)
 		return -EINVAL;
@@ -201,39 +212,150 @@ static void iio_adc_state_init(void)
 	}
 }
 
-static struct iio_data_format adc_fmt = {
-	.length = 16,
-	.bits = 0,
-	.is_signed = false,
+/*
+ * Per-channel format, computed as the Zephyr io_channels driver does: the
+ * storage is the resolution rounded up to whole bytes, big endian, signed for
+ * a differential channel, and the scale is one LSB in millivolts. The format
+ * is published in the context XML, so it follows the channel's differential
+ * setting at context creation.
+ */
+static void adc_channel_format(unsigned int idx, struct iio_data_format *fmt)
+{
+	unsigned int res = iio_adc_hal.resolution_bits;
+	bool is_signed = chan_state[idx].differential;
+
+	*fmt = (struct iio_data_format) {
+		.length = NO_OS_DIV_ROUND_UP(res, 8) * 8,
+		.bits = res,
+		.is_signed = is_signed,
+		.with_scale = true,
+		.scale = (double)iio_adc_hal.ref_voltage_mv /
+			 (double)(1ull << (res - (is_signed ? 1 : 0))),
+		.is_be = true,
+	};
+}
+
+struct adc_scan_channel {
+	unsigned int hal_idx;
+	unsigned int bits;
+	size_t bytes;
+	size_t offset;
 };
 
-static int iio_adc_read_samples(void *dev, void *data, size_t bytes)
+/*
+ * One scan per trigger tick: every enabled channel is converted once and
+ * stored at its offset in the sample, the layout iio_device_get_sample_size()
+ * describes (each channel aligned to its own size).
+ */
+static int iio_adc_read_samples(void *dev, const struct iio_device *iio_dev,
+				const struct iio_channels_mask *mask,
+				void *data, size_t bytes)
 {
-	size_t num_samples = bytes / sizeof(uint16_t);
-	uint16_t *buffer = (uint16_t *)data;
-	int raw;
+	struct adc_scan_channel scan[IIO_ADC_MAX_CHANNELS];
+	unsigned int c, n, nb_channels, nb_scan = 0;
+	uint8_t *out = (uint8_t *)data;
+	size_t s, nb_samples, offset = 0;
+	ssize_t sample_size;
+	int ret;
 
-	for (size_t i = 0; i < num_samples; i++) {
-		int ret = iio_adc_hal.read_raw(0, &raw);
+	if (!mask)
+		return -EINVAL;
 
+	sample_size = iio_device_get_sample_size(iio_dev, mask);
+	if (sample_size <= 0)
+		return sample_size ? (int)sample_size : -EINVAL;
+
+	if (bytes % (size_t)sample_size)
+		return -EINVAL;
+
+	nb_channels = iio_device_get_channels_count(iio_dev);
+	for (c = 0; c < nb_channels && nb_scan < IIO_ADC_MAX_CHANNELS; c++) {
+		const struct iio_channel *chn = iio_device_get_channel(iio_dev, c);
+		const struct iio_data_format *fmt;
+		struct adc_scan_channel *sc = &scan[nb_scan];
+		int idx;
+
+		if (!iio_channel_is_scan_element(chn) ||
+		    !iio_channel_is_enabled(chn, mask))
+			continue;
+
+		idx = adc_channel_index(iio_channel_get_id(chn));
+		if (idx < 0)
+			return idx;
+
+		fmt = iio_channel_get_data_format(chn);
+
+		sc->hal_idx = (unsigned int)idx;
+		sc->bits = fmt->bits;
+		sc->bytes = fmt->length / 8;
+		if (offset % sc->bytes)
+			offset += sc->bytes - offset % sc->bytes;
+		sc->offset = offset;
+		offset += sc->bytes;
+		nb_scan++;
+	}
+
+	if (!nb_scan || offset > (size_t)sample_size)
+		return -EINVAL;
+
+	nb_samples = bytes / (size_t)sample_size;
+
+	for (s = 0; s < nb_samples; s++) {
+		uint8_t *sample = out + s * (size_t)sample_size;
+
+		ret = iio_trigger_timer_wait();
 		if (ret)
 			return ret;
-		buffer[i] = raw & ((1u << adc_fmt.bits) - 1);
+
+		for (n = 0; n < nb_scan; n++) {
+			const struct adc_scan_channel *sc = &scan[n];
+			uint8_t *dst = sample + sc->offset;
+			uint32_t val;
+			size_t b;
+			int raw;
+
+			ret = iio_adc_hal.read_raw(sc->hal_idx, &raw);
+			if (ret)
+				return ret;
+
+			/* Two's complement kept to the channel's bits. */
+			val = (uint32_t)raw;
+			if (sc->bits < 32)
+				val &= (1u << sc->bits) - 1;
+
+			for (b = 0; b < sc->bytes; b++)
+				dst[b] = (uint8_t)(val >> ((sc->bytes - 1 - b) * 8));
+		}
 	}
+
+	return 0;
+}
+
+static int iio_adc_enable_buffer(void *dev, bool enable)
+{
+	/* The first read of the next stream starts the trigger again. */
+	if (!enable)
+		iio_trigger_timer_stop();
 
 	return 0;
 }
 
 static int iio_adc_add_channels(void *dev, struct iio_device *iio_dev)
 {
+	struct iio_data_format fmt;
 	struct iio_channel *ch;
 	unsigned int i, n = iio_adc_hal.num_channels;
 
+	if (n > IIO_ADC_MAX_CHANNELS)
+		return -EINVAL;
+
 	for (i = 0; i < n; i++) {
+		adc_channel_format(i, &fmt);
+
 		ch = iio_device_add_channel(iio_dev, (long)i,
 					    iio_adc_hal.channels[i],
 					    NULL, NULL,
-					    false, true, &adc_fmt);
+					    false, true, &fmt);
 		if (!ch)
 			return -ENOMEM;
 
@@ -298,12 +420,11 @@ static int iio_adc_read_attr(void *dev,
 	}
 
 	if (strcmp(attr_name, "gain") == 0)
-		return snprintf(dst, len, "%s",
-				gain_values[chan_state[idx].gain]) + 1;
+		return adc_emit_str(dst, len, gain_values[chan_state[idx].gain]);
 
 	if (strcmp(attr_name, "reference") == 0)
-		return snprintf(dst, len, "%s",
-				reference_values[chan_state[idx].reference]) + 1;
+		return adc_emit_str(dst, len,
+				    reference_values[chan_state[idx].reference]);
 
 	if (strcmp(attr_name, "differential") == 0)
 		return adc_emit_int(dst, len, chan_state[idx].differential);
@@ -450,11 +571,12 @@ int iio_adc_init(void)
 	if (ret)
 		return ret;
 
-	adc_fmt.bits = iio_adc_hal.resolution_bits;
+	if (!iio_adc_hal.resolution_bits || iio_adc_hal.resolution_bits > 32)
+		return -EINVAL;
 
 	iio_adc_state_init();
 
-	return 0;
+	return iio_trigger_timer_init();
 }
 
 int iio_adc_get_device_info(struct noos_iio_device_info *info)
@@ -462,16 +584,17 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 	if (!info)
 		return -EINVAL;
 
-	info->name = "iio-adc";
-	info->dev = NULL;
-	info->direction = 0;
-	info->add_channels = iio_adc_add_channels;
-	info->read_attr = iio_adc_read_attr;
-	info->write_attr = iio_adc_write_attr;
-	info->read_samples = iio_adc_read_samples;
-	info->write_samples = NULL;
-	info->reg_read = iio_adc_reg_read;
-	info->reg_write = iio_adc_reg_write;
+	*info = (struct noos_iio_device_info) {
+		.name = "iio-adc",
+		.add_channels = iio_adc_add_channels,
+		.read_attr = iio_adc_read_attr,
+		.write_attr = iio_adc_write_attr,
+		.read_samples = iio_adc_read_samples,
+		.enable_buffer = iio_adc_enable_buffer,
+		.reg_read = iio_adc_reg_read,
+		.reg_write = iio_adc_reg_write,
+		.trigger = IIO_TRIGGER_TIMER_NAME,
+	};
 
 	return 0;
 }
