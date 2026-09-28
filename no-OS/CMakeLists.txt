@@ -1,52 +1,108 @@
 # Copyright (c) 2025 Analog Devices, Inc.
 # SPDX-License-Identifier: MIT
+#
+# libiio iiod firmware on no-OS, built through no-OS's own CMake + Kconfig:
+# the toolchain, board defconfigs, platform drivers, lwIP and flash tooling
+# all come from an upstream no-OS checkout, found by cmake/no_os_locate.cmake.
+# This file only adds the libiio sources and links them against no-os, the
+# same way a project under no-OS/projects/ does.
+#
+#   cmake --workflow --preset usb                      # default board
+#   cmake --preset usb --fresh -DBOARD=max32690fthr    # any no-OS board
+#   cmake --build --preset flash-usb
+#
+# BOARD is any board no-OS lists in board_configs/<platform>/; the platform,
+# part and defconfig come from there (cmake/no_os_board.cmake).
+#
+# Without BOARD it is a host build: only the PC-side API tests.
 
-cmake_minimum_required(VERSION 3.13)
-project(libiio-noos C ASM)
+# no-OS's CMake needs 3.27.
+cmake_minimum_required(VERSION 3.27)
 
-# LIBIIO_DIR is now the parent directory (libiio root)
 set(LIBIIO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
+get_filename_component(LIBIIO_DIR "${LIBIIO_DIR}" REALPATH)
 
-# The no-OS checkout: -DNOOS_DIR first, then the NOOS_DIR environment variable,
-# then the two conventional locations. Nothing here may name a personal
-# directory -- this has to configure on anyone's machine.
-if(NOT DEFINED NOOS_DIR AND DEFINED ENV{NOOS_DIR})
-  set(NOOS_DIR "$ENV{NOOS_DIR}" CACHE PATH "no-OS source tree")
+###############################################################################
+# Host build: the API tests that talk to a board
+###############################################################################
+if(NOT BOARD)
+  project(libiio-noos-tests C)
+
+  option(WITH_TESTS "Build the no-OS libiio API tests" ON)
+  if(WITH_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+  endif()
+
+  return()
 endif()
 
-# This port lives inside the libiio tree as no-OS/, so "../no-OS" relative to
-# here is this very directory -- never a candidate. Only a checkout beside
-# libiio or under $HOME can be found without being told where it is.
-if(NOT DEFINED NOOS_DIR)
-  foreach(candidate
-      "${CMAKE_CURRENT_SOURCE_DIR}/../../no-OS"
-      "$ENV{HOME}/no-OS")
-    if(EXISTS "${candidate}/include/no_os_uart.h")
-      set(NOOS_DIR "${candidate}" CACHE PATH "no-OS source tree")
-      set(NOOS_DIR_GUESSED TRUE)
-      break()
-    endif()
-  endforeach()
+###############################################################################
+# Firmware build
+###############################################################################
+set(IIOD_TRANSPORT uart CACHE STRING "IIOD transport: uart, usb or network")
+set_property(CACHE IIOD_TRANSPORT PROPERTY STRINGS uart usb network)
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/configs/${IIOD_TRANSPORT}.conf)
+  message(FATAL_ERROR "unknown IIOD_TRANSPORT '${IIOD_TRANSPORT}' (uart, usb or network).")
 endif()
 
-if(NOT NOOS_DIR OR NOT EXISTS "${NOOS_DIR}/include/no_os_uart.h")
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/no_os_locate.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/no_os_board.cmake)
+
+set(IIOD_PLATFORM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/${PLATFORM})
+if(NOT EXISTS ${IIOD_PLATFORM_DIR}/parameters.h)
   message(FATAL_ERROR
-    "no-OS source tree not found. Pass -DNOOS_DIR=/path/to/no-OS "
-    "or export NOOS_DIR in your shell.")
+    "${BOARD} is a PLATFORM=${PLATFORM} board, which has no iiod glue yet: add "
+    "platform/${PLATFORM}/ with parameters.h and timers.h (UART, trigger timer "
+    "and IRQ wiring, see platform/maxim/). no-OS itself supports the platform; "
+    "the port does not.")
 endif()
 
-get_filename_component(NOOS_DIR "${NOOS_DIR}" REALPATH)
-
-# Say when the tree was guessed: a machine with several no-OS checkouts would
-# otherwise switch trees silently.
-if(NOOS_DIR_GUESSED)
-  message(STATUS "NOOS_DIR = ${NOOS_DIR} (guessed -- export NOOS_DIR or pass "
-                 "-DNOOS_DIR to build against another checkout)")
-else()
-  message(STATUS "NOOS_DIR = ${NOOS_DIR}")
+# The toolchain is read by project(), before no-OS is added below, so point
+# at it here; no-OS only picks one itself when it is the top-level project.
+if(NOT CMAKE_TOOLCHAIN_FILE)
+  set(CMAKE_TOOLCHAIN_FILE ${NO_OS_PATH}/drivers/platform/${PLATFORM}/toolchain.cmake)
 endif()
 
-# ---------- libiio core sources ----------
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type")
+endif()
+
+project(libiio-noos C CXX ASM)
+
+# The project defconfig is the transport fragment plus the platform's share of
+# it (e.g. the Maxim USB stack), merged by no-OS after the board defconfig.
+# no-OS reads it relative to this directory, and derives the variant from the
+# file name: boards/<transport>/<BOARD>.conf, when present, overrides both.
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/configs/${IIOD_TRANSPORT}.conf _defconfig)
+if(EXISTS ${IIOD_PLATFORM_DIR}/configs/${IIOD_TRANSPORT}.conf)
+  file(READ ${IIOD_PLATFORM_DIR}/configs/${IIOD_TRANSPORT}.conf _platform_defconfig)
+  string(APPEND _defconfig "${_platform_defconfig}")
+endif()
+file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/iiod/${IIOD_TRANSPORT}.conf
+     CONTENT "${_defconfig}" @ONLY)
+file(RELATIVE_PATH PROJECT_DEFCONFIG ${CMAKE_SOURCE_DIR}
+     ${CMAKE_BINARY_DIR}/iiod/${IIOD_TRANSPORT}.conf)
+
+add_subdirectory(${NO_OS_PATH} no-os)
+
+# The same module path no-OS's own CMakeLists.txt uses, plus the platform's
+# cmake/<platform>/ dir; config_platform_sdk() below includes that dir's
+# <platform>_platform_sdk.cmake itself.
+list(APPEND CMAKE_MODULE_PATH
+  ${NO_OS_DIR}/cmake
+  ${NO_OS_DIR}/cmake/stm32
+  ${NO_OS_DIR}/cmake/libraries
+)
+if(IS_DIRECTORY ${NO_OS_DIR}/cmake/${PLATFORM})
+  list(APPEND CMAKE_MODULE_PATH ${NO_OS_DIR}/cmake/${PLATFORM})
+endif()
+list(REMOVE_DUPLICATES CMAKE_MODULE_PATH)
+include(project_utils)
+
+include(${IIOD_PLATFORM_DIR}/platform.cmake OPTIONAL)
+
+# ---------- libiio core ----------
 set(LIBIIO_SRCS
   ${LIBIIO_DIR}/context.c
   ${LIBIIO_DIR}/library.c
@@ -65,97 +121,51 @@ set(LIBIIO_SRCS
   ${LIBIIO_DIR}/block.c
   ${LIBIIO_DIR}/events.c
   ${LIBIIO_DIR}/tinyiiod/tinyiiod.c
+  ${LIBIIO_DIR}/tinyiiod/ops-stubs.c
   ${LIBIIO_DIR}/iiod/responder.c
   ${LIBIIO_DIR}/iiod-responder.c
   ${LIBIIO_DIR}/iiod/rw.c
 )
 
-# ---------- transport options ----------
-option(WITH_IIOD_UART    "Build UART transport"    ON)
-option(WITH_IIOD_NETWORK "Build network transport"  ON)
-option(WITH_IIOD_USB     "Build USB transport"     OFF)
-
-option(WITH_IIOD_V0_COMPAT "Build v0 (ASCII) protocol compat for UART" ON)
-if(WITH_IIOD_V0_COMPAT AND WITH_IIOD_UART)
-  set(V0_COMPAT_ON 1)
-else()
-  set(V0_COMPAT_ON 0)
+# ---------- ADC HAL: the platform's own, else the hardware-free demo ----------
+if(NOT IIOD_PLATFORM_ADC)
+  set(IIOD_PLATFORM_ADC adc_demo)
+endif()
+set(ADC ${IIOD_PLATFORM_ADC} CACHE STRING "ADC HAL under drivers/adc/")
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
+  message(FATAL_ERROR "no ADC HAL drivers/adc/${ADC}/${ADC}.c")
 endif()
 
-# ---------- no-OS backend / transport sources ----------
-set(NOOS_BACKEND_SRCS
+add_executable(libiio-noos
+  ${LIBIIO_SRCS}
   ${CMAKE_CURRENT_SOURCE_DIR}/backend.c
-)
-
-if(WITH_IIOD_UART)
-  list(APPEND NOOS_BACKEND_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/uart.c
-  )
-endif()
-
-if(WITH_IIOD_NETWORK)
-  list(APPEND NOOS_BACKEND_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/network.c
-  )
-endif()
-
-if(WITH_IIOD_USB)
-  list(APPEND NOOS_BACKEND_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/usb.c
-  )
-endif()
-
-# ---------- no-OS platform API sources ----------
-set(NOOS_PLATFORM_SRCS
-  ${NOOS_DIR}/drivers/api/no_os_uart.c
-  ${NOOS_DIR}/util/no_os_alloc.c
-  ${NOOS_DIR}/util/no_os_mutex.c
-  ${NOOS_DIR}/util/no_os_lf256fifo.c
-)
-
-if(WITH_IIOD_NETWORK)
-  list(APPEND NOOS_PLATFORM_SRCS
-    ${NOOS_DIR}/network/tcp_socket.c
-  )
-endif()
-
-if(WITH_IIOD_USB)
-  list(APPEND NOOS_PLATFORM_SRCS
-    ${NOOS_DIR}/drivers/api/no_os_timer.c
-    ${NOOS_DIR}/drivers/api/no_os_irq.c
-    ${NOOS_DIR}/util/no_os_list.c
-  )
-endif()
-
-# ---------- IIO ADC device driver ----------
-set(IIO_ADC_SRCS
+  ${CMAKE_CURRENT_SOURCE_DIR}/iiod/${IIOD_TRANSPORT}.c
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_adc.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_trigger_timer.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/main.c
+  ${IIOD_PLATFORM_SRCS}
 )
 
-# ---------- Application ----------
-set(APP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/main.c)
-
-# ---------- Include directories (common) ----------
-set(COMMON_INCLUDES
+target_include_directories(libiio-noos PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers
   ${CMAKE_CURRENT_SOURCE_DIR}/iiod
+  ${IIOD_PLATFORM_DIR}
   ${LIBIIO_DIR}/include
   ${LIBIIO_DIR}
   ${LIBIIO_DIR}/iiod
-  ${NOOS_DIR}/include
-  ${NOOS_DIR}/network
+  ${IIOD_PLATFORM_INCLUDES}
 )
 
-# ---------- Compile definitions (common) ----------
-set(COMMON_DEFS
+target_compile_definitions(libiio-noos PRIVATE
   LIBIIO_STATIC=1
   NO_THREADS=1
   WITH_ZSTD=0
   WITH_LIBTINYIIOD=1
   WITH_EXTERNAL_BACKEND=1
   WITH_IIOD_USB_DMABUF=0
-  WITH_IIOD_V0_COMPAT=${V0_COMPAT_ON}
+  WITH_IIOD_V0_COMPAT=0
   WITH_LOCAL_BACKEND=0
   WITH_NETWORK_BACKEND=0
   WITH_SERIAL_BACKEND=0
@@ -175,302 +185,20 @@ set(COMMON_DEFS
   LIBIIO_VERSION_GIT="v1.0"
   HAS_STRTOK_R=1
   LIBIIO_SCAN_BACKENDS=""
-  DISABLE_SECURE_SOCKET
+  DISABLE_SECURE_SOCKET=1
+  ${IIOD_PLATFORM_DEFS}
 )
 
-# ---------- v0 (ASCII) protocol compat sources ----------
-if(V0_COMPAT_ON)
-  find_program(BISON_EXECUTABLE bison REQUIRED)
-  find_program(FLEX_EXECUTABLE  flex  REQUIRED)
-
-  set(V0_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/v0-compat)
-  file(MAKE_DIRECTORY ${V0_GEN_DIR})
-
-  add_custom_command(
-    OUTPUT  ${V0_GEN_DIR}/parser.c ${V0_GEN_DIR}/parser.h
-    COMMAND ${BISON_EXECUTABLE} -d -o ${V0_GEN_DIR}/parser.c ${LIBIIO_DIR}/iiod/parser.y
-    DEPENDS ${LIBIIO_DIR}/iiod/parser.y
-    COMMENT "bison: iiod/parser.y"
-  )
-  add_custom_command(
-    OUTPUT  ${V0_GEN_DIR}/lexer.c
-    COMMAND ${FLEX_EXECUTABLE} -o ${V0_GEN_DIR}/lexer.c ${LIBIIO_DIR}/iiod/lexer.l
-    DEPENDS ${LIBIIO_DIR}/iiod/lexer.l ${V0_GEN_DIR}/parser.h
-    COMMENT "flex: iiod/lexer.l"
-  )
-
-  list(APPEND NOOS_BACKEND_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/ascii-ops.c
-    ${V0_GEN_DIR}/parser.c
-    ${V0_GEN_DIR}/lexer.c
-  )
-  list(APPEND COMMON_INCLUDES ${V0_GEN_DIR})
-
-  set_source_files_properties(
-    ${V0_GEN_DIR}/parser.c
-    ${V0_GEN_DIR}/lexer.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/iiod/ascii-ops.c
-    PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare"
+if(IIOD_TRANSPORT STREQUAL "usb")
+  string(TOUPPER ${BOARD} _board_upper)
+  target_compile_definitions(libiio-noos PRIVATE
+    NO_OS_USB_TRANSPORT
+    NO_OS_USB_PRODUCT="${_board_upper} IIO"
   )
 endif()
 
-###############################################################################
-# Cross-compilation for a bare-metal board (CMAKE_SYSTEM_NAME == "Generic")
-###############################################################################
-if(CMAKE_SYSTEM_NAME STREQUAL "Generic")
+target_link_libraries(libiio-noos PRIVATE no-os)
 
-  # BOARD, and the core it implies, are resolved by cmake/bare-metal.cmake
-  # before this file is read -- toolchain files run first, and the compiler
-  # flags depend on the board. Here we load the rest of the board description.
-  if(NOT DEFINED BOARD)
-    message(FATAL_ERROR
-      "BOARD is not set. Cross builds must go through the bare-metal "
-      "toolchain file: cmake --preset uart, or "
-      "cmake --toolchain cmake/bare-metal.cmake -DBOARD=max32690 ...")
-  endif()
-
-  message(STATUS "BOARD = ${BOARD} (${BOARD_ARCH})")
-  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boards/${BOARD}.cmake)
-
-  set(ADC common_api CACHE STRING "ADC device HAL (defaults to the board's internal ADC)")
-  set(BOARD_ADC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
-
-  option(WITH_LWIP_NETWORKING "Enable lwIP + ADIN1110 network transport" ON)
-
-  # --- MAXUSB library (for USB transport) ---
-  if(WITH_IIOD_USB)
-    set(MAXUSB_DIR ${MSDK_DIR}/Libraries/MAXUSB)
-    set(MAXUSB_SRCS
-      ${MAXUSB_DIR}/src/core/musbhsfc/usb.c
-      ${MAXUSB_DIR}/src/core/usb_event.c
-      ${MAXUSB_DIR}/src/enumerate/enumerate.c
-      ${MAXUSB_DIR}/src/devclass/cdc_acm.c
-      ${PLATFORM_DIR}/maxim_usb_uart.c
-    )
-    set(MAXUSB_INCLUDES
-      ${MAXUSB_DIR}/include/core
-      ${MAXUSB_DIR}/include/core/musbhsfc
-      ${MAXUSB_DIR}/include/enumerate
-      ${MAXUSB_DIR}/include/devclass
-    )
-  endif()
-
-  if(WITH_LWIP_NETWORKING)
-    set(NET_CHIP adin1110 CACHE STRING "Ethernet netdev chip")
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/netdevs/${NET_CHIP}.cmake)
-    set(LWIP_DIR ${NOOS_DIR}/libraries/lwip/lwip)
-
-    # no-OS ships the lwIP port glue (arch/cc.h, configs/lwipopts.h) under two
-    # different roots depending on the checkout's age. Same files either way.
-    foreach(glue "${NOOS_DIR}/libraries/lwip-glue" "${NOOS_DIR}/libraries/lwip")
-      if(EXISTS "${glue}/configs/lwipopts.h")
-        set(LWIP_GLUE_DIR "${glue}")
-        break()
-      endif()
-    endforeach()
-
-    if(NOT LWIP_GLUE_DIR)
-      message(FATAL_ERROR
-        "lwIP port glue not found under ${NOOS_DIR}/libraries. Looked for "
-        "lwip-glue/configs/lwipopts.h and lwip/configs/lwipopts.h. Update the "
-        "no-OS checkout (git submodule update --init) or build with "
-        "-DWITH_LWIP_NETWORKING=OFF.")
-    endif()
-
-    message(STATUS "lwIP glue = ${LWIP_GLUE_DIR}")
-    if(NOT DEFINED NO_OS_IP)
-      set(NO_OS_IP "192.0.2.1")
-    endif()
-    if(NOT DEFINED NO_OS_NETMASK)
-      set(NO_OS_NETMASK "255.255.255.0")
-    endif()
-    if(NOT DEFINED NO_OS_GATEWAY)
-      set(NO_OS_GATEWAY "192.0.2.2")
-    endif()
-  endif()
-
-  # --- Additional no-OS API & utility sources ---
-  set(NOOS_EXTRA_SRCS
-    ${NOOS_DIR}/drivers/api/no_os_irq.c
-    ${NOOS_DIR}/drivers/api/no_os_spi.c
-    ${NOOS_DIR}/drivers/api/no_os_gpio.c
-    ${NOOS_DIR}/drivers/api/no_os_timer.c
-    ${NOOS_DIR}/drivers/api/no_os_dma.c
-    ${NOOS_DIR}/util/no_os_fifo.c
-    ${NOOS_DIR}/util/no_os_list.c
-    ${NOOS_DIR}/util/no_os_util.c
-    ${NOOS_DIR}/util/no_os_crc8.c
-  )
-
-  # --- Networking sources (netdev chip + lwIP) ---
-  if(WITH_LWIP_NETWORKING)
-    file(GLOB LWIP_CORE_SRCS    ${LWIP_DIR}/src/core/*.c)
-    file(GLOB LWIP_CORE4_SRCS   ${LWIP_DIR}/src/core/ipv4/*.c)
-    file(GLOB LWIP_API_SRCS     ${LWIP_DIR}/src/api/*.c)
-    file(GLOB LWIP_NETIF_SRCS   ${LWIP_DIR}/src/netif/*.c)
-    file(GLOB LWIP_MDNS_SRCS    ${LWIP_DIR}/src/apps/mdns/*.c)
-    file(GLOB LWIP_PERF_SRCS    ${LWIP_DIR}/src/apps/lwiperf/*.c)
-
-    set(LWIP_SOCKET_SRCS
-      ${NOOS_DIR}/network/lwip_raw_socket/lwip_socket.c
-    )
-  endif()
-
-  # --- Per-platform USB device backend (implements iio_usb_ops) ---
-  if(WITH_IIOD_USB)
-    set(USB_BACKEND_SRC
-      ${CMAKE_CURRENT_SOURCE_DIR}/platform/${BOARD_PLATFORM_NAME}/iio_usb_backend.c)
-    if(NOT EXISTS ${USB_BACKEND_SRC})
-      message(FATAL_ERROR
-        "platform '${BOARD_PLATFORM_NAME}' has no USB device backend "
-        "(expected ${USB_BACKEND_SRC}).")
-    endif()
-    list(APPEND NOOS_BACKEND_SRCS ${USB_BACKEND_SRC})
-  endif()
-
-  # --- Build the executable ---
-  add_executable(libiio-noos
-    ${LIBIIO_SRCS}
-    ${NOOS_BACKEND_SRCS}
-    ${NOOS_PLATFORM_SRCS}
-    ${NOOS_EXTRA_SRCS}
-    ${IIO_ADC_SRCS}
-    ${BOARD_ADC_SRC}
-    ${BOARD_STARTUP_SRCS}
-    ${BOARD_PERIPH_SRCS}
-    ${BOARD_PLATFORM_SRCS}
-    ${MAXUSB_SRCS}
-    ${NET_CHIP_SRCS}
-    ${LWIP_CORE_SRCS}
-    ${LWIP_CORE4_SRCS}
-    ${LWIP_API_SRCS}
-    ${LWIP_NETIF_SRCS}
-    ${LWIP_MDNS_SRCS}
-    ${LWIP_PERF_SRCS}
-    ${LWIP_SOCKET_SRCS}
-    ${APP_SRCS}
-  )
-
-  target_include_directories(libiio-noos PRIVATE
-    ${COMMON_INCLUDES}
-    ${BOARD_INCLUDES}
-
-    ${CMAKE_CURRENT_SOURCE_DIR}/platform/${BOARD_PLATFORM_NAME}
-
-    ${MAXUSB_INCLUDES}
-  )
-
-  # LWIP_DIR and LWIP_GLUE_DIR are empty unless lwIP is on, and an empty prefix
-  # would put /src/include and /configs on every other build's include path.
-  if(WITH_LWIP_NETWORKING)
-    target_include_directories(libiio-noos PRIVATE
-      ${NET_CHIP_INCLUDES}
-
-      ${LWIP_DIR}/src/include
-      ${LWIP_DIR}/src/include/compat
-      ${LWIP_DIR}/src/include/netif
-      ${LWIP_GLUE_DIR}/configs
-      ${LWIP_GLUE_DIR}
-      ${NOOS_DIR}/network/lwip_raw_socket
-    )
-  endif()
-
-  target_compile_definitions(libiio-noos PRIVATE
-    ${COMMON_DEFS}
-    ${BOARD_DEFS}
-  )
-
-  if(WITH_IIOD_USB)
-    string(TOUPPER ${BOARD} BOARD_UPPER)
-    target_compile_definitions(libiio-noos PRIVATE
-      NO_OS_USB_TRANSPORT
-      NO_OS_USB_PRODUCT="${BOARD_UPPER} IIO"
-    )
-  endif()
-
-  if(WITH_LWIP_NETWORKING)
-    target_compile_definitions(libiio-noos PRIVATE
-      NO_OS_LWIP_NETWORKING
-      LWIP_PROVIDE_ERRNO
-      NO_OS_IP="${NO_OS_IP}"
-      NO_OS_NETMASK="${NO_OS_NETMASK}"
-      NO_OS_GATEWAY="${NO_OS_GATEWAY}"
-      NETDEV_HEADER="${NET_CHIP_HEADER}"
-    )
-  endif()
-
-  target_link_options(libiio-noos PRIVATE
-    -T${BOARD_LINKER_SCRIPT}
-    -Wl,--entry=Reset_Handler
-    -Wl,--gc-sections
-  )
-
-  # --- Post-build: generate .bin and .hex ---
-  add_custom_command(TARGET libiio-noos POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:libiio-noos> libiio-noos.bin
-    COMMAND ${CMAKE_OBJCOPY} -O ihex   $<TARGET_FILE:libiio-noos> libiio-noos.hex
-    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:libiio-noos>
-    COMMENT "Generating .bin and .hex"
-  )
-
-  # --- Flash ---
-  # Which tool flashes a board is vendor knowledge, so the recipe comes from
-  # cmake/platforms/<vendor>.cmake as BOARD_FLASH_COMMAND, with @FLASH_IMAGE@
-  # standing in for the image this build produces. A platform that cannot flash
-  # sets BOARD_FLASH_ERROR instead, and the target reports it when invoked
-  # rather than failing the configure -- building without a probe attached is
-  # normal.
-  if(NOT BOARD_FLASH_COMMAND AND NOT BOARD_FLASH_ERROR)
-    set(BOARD_FLASH_ERROR
-        "platform '${BOARD_PLATFORM_NAME}' defines no flash command")
-  endif()
-
-  if(BOARD_FLASH_ERROR)
-    add_custom_target(flash
-      COMMAND ${CMAKE_COMMAND} -E echo "ERROR: ${BOARD_FLASH_ERROR}"
-      COMMAND ${CMAKE_COMMAND} -E false
-      VERBATIM
-    )
-  else()
-    string(REPLACE "@FLASH_IMAGE@" "libiio-noos.hex"
-           FLASH_COMMAND "${BOARD_FLASH_COMMAND}")
-    add_custom_target(flash
-      COMMAND ${FLASH_COMMAND}
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-      COMMENT "Flashing libiio-noos.hex to ${BOARD}"
-      USES_TERMINAL
-      VERBATIM
-    )
-    add_dependencies(flash libiio-noos)
-  endif()
-
-###############################################################################
-# Host / native build (for development / testing)
-###############################################################################
-else()
-
-  add_executable(libiio-noos
-    ${LIBIIO_SRCS}
-    ${NOOS_BACKEND_SRCS}
-    ${NOOS_PLATFORM_SRCS}
-    ${APP_SRCS}
-  )
-
-  target_include_directories(libiio-noos PRIVATE
-    ${COMMON_INCLUDES}
-  )
-
-  target_compile_definitions(libiio-noos PRIVATE
-    ${COMMON_DEFS}
-  )
-
-  target_compile_options(libiio-noos PRIVATE -Wall)
-
-  option(WITH_TESTS "Build the no-OS libiio API tests" OFF)
-
-  if(WITH_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
-  endif()
-
-endif()
+config_platform_sdk(libiio-noos)
+add_flash_target(libiio-noos)
+post_build_config(libiio-noos)
