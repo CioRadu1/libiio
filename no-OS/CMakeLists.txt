@@ -121,11 +121,55 @@ set(LIBIIO_SRCS
   ${LIBIIO_DIR}/block.c
   ${LIBIIO_DIR}/events.c
   ${LIBIIO_DIR}/tinyiiod/tinyiiod.c
-  ${LIBIIO_DIR}/tinyiiod/ops-stubs.c
   ${LIBIIO_DIR}/iiod/responder.c
   ${LIBIIO_DIR}/iiod-responder.c
   ${LIBIIO_DIR}/iiod/rw.c
 )
+
+# ---------- v0 (ASCII) protocol, so libiio v0.x clients can connect ----------
+option(WITH_IIOD_V0_COMPAT "Serve libiio v0.x clients (ASCII protocol)" ON)
+if(WITH_IIOD_V0_COMPAT)
+  set(V0_COMPAT_ON 1)
+  find_program(BISON_EXECUTABLE bison REQUIRED)
+  find_program(FLEX_EXECUTABLE flex REQUIRED)
+
+  # Generated into <build>/iiod so "../iiod/parser.h" (ascii-ops.c) and
+  # "../iio-config.h" (parser.y) resolve without touching the iiod sources.
+  set(V0_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/iiod)
+  file(MAKE_DIRECTORY ${V0_GEN_DIR})
+  file(WRITE ${V0_GEN_DIR}/lexer-prologue.l "%option always-interactive\n")
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/iio-config.h
+                 ${CMAKE_CURRENT_BINARY_DIR}/iio-config.h COPYONLY)
+
+  add_custom_command(
+    OUTPUT ${V0_GEN_DIR}/parser.c ${V0_GEN_DIR}/parser.h
+    COMMAND ${BISON_EXECUTABLE} -d -o ${V0_GEN_DIR}/parser.c
+            ${LIBIIO_DIR}/iiod/parser.y
+    DEPENDS ${LIBIIO_DIR}/iiod/parser.y
+    COMMENT "bison: iiod/parser.y"
+  )
+  add_custom_command(
+    OUTPUT ${V0_GEN_DIR}/lexer.c
+    COMMAND ${FLEX_EXECUTABLE} -o ${V0_GEN_DIR}/lexer.c
+            ${V0_GEN_DIR}/lexer-prologue.l ${LIBIIO_DIR}/iiod/lexer.l
+    DEPENDS ${LIBIIO_DIR}/iiod/lexer.l ${V0_GEN_DIR}/parser.h
+    COMMENT "flex: iiod/lexer.l"
+  )
+
+  set(V0_COMPAT_SRCS
+    ${LIBIIO_DIR}/tinyiiod/ascii-ops.c
+    ${V0_GEN_DIR}/parser.c
+    ${V0_GEN_DIR}/lexer.c
+  )
+  set_source_files_properties(${V0_COMPAT_SRCS}
+    PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare"
+               INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/include/compat)
+  list(APPEND LIBIIO_SRCS ${V0_COMPAT_SRCS})
+else()
+  set(V0_COMPAT_ON 0)
+  # Only the stub of what ascii-ops.c would provide.
+  list(APPEND LIBIIO_SRCS ${LIBIIO_DIR}/tinyiiod/ops-stubs.c)
+endif()
 
 # ---------- ADC HAL: the platform's own, else the hardware-free demo ----------
 if(NOT IIOD_PLATFORM_ADC)
@@ -155,6 +199,7 @@ target_include_directories(libiio-noos PRIVATE
   ${LIBIIO_DIR}/include
   ${LIBIIO_DIR}
   ${LIBIIO_DIR}/iiod
+  ${V0_GEN_DIR}
   ${IIOD_PLATFORM_INCLUDES}
 )
 
@@ -165,7 +210,7 @@ target_compile_definitions(libiio-noos PRIVATE
   WITH_LIBTINYIIOD=1
   WITH_EXTERNAL_BACKEND=1
   WITH_IIOD_USB_DMABUF=0
-  WITH_IIOD_V0_COMPAT=0
+  WITH_IIOD_V0_COMPAT=${V0_COMPAT_ON}
   WITH_LOCAL_BACKEND=0
   WITH_NETWORK_BACKEND=0
   WITH_SERIAL_BACKEND=0
