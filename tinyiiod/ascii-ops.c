@@ -467,50 +467,319 @@ int set_timeout(struct parser_pdata *pdata, int timeout)
 	return ret;
 }
 
-/* Stub - to be implemented. */
-int set_buffers_count(struct parser_pdata *pdata, struct iio_device *dev, long value)
-{
-	(void)dev;
-	(void)value;
+/*
+ * Differs from the ops.c streaming path: there is no per-device RW thread and
+ * no client list. One device can be open at a time and each READBUF/WRITEBUF
+ * is served synchronously on the caller's transport with a single block.
+ */
+struct v0_stream {
+	struct iio_device *dev;
+	struct iio_channels_mask *mask;
+	struct iio_buffer_stream *buf_stream;
+	struct iio_block *block;
+	size_t sample_size;
+	size_t block_size;
+	bool is_output;
+	bool cyclic;
+	bool enqueued;
+};
 
-	print_value(pdata, -ENOSYS);
-	return -ENOSYS;
+static struct v0_stream v0_stream;
+
+#define V0_MIN(a, b)	((a) < (b) ? (a) : (b))
+
+static void v0_stream_free(struct v0_stream *s)
+{
+	if (s->buf_stream)
+		iio_buffer_stream_stop(s->buf_stream);
+	if (s->block)
+		iio_block_destroy(s->block);
+	if (s->buf_stream)
+		iio_buffer_close(s->buf_stream);
+	if (s->mask)
+		iio_channels_mask_destroy(s->mask);
+
+	memset(s, 0, sizeof(*s));
 }
 
-/* Stub - to be implemented. */
-int open_dev(struct parser_pdata *pdata, struct iio_device *dev, size_t samples_count,
-		const char *mask, bool cyclic)
+/* Same format as get_mask() in ops.c: hex words, most significant first. */
+static int v0_parse_mask(const struct iio_device *dev, const char *mask,
+			 struct iio_channels_mask *chn_mask)
 {
-	(void)dev;
-	(void)samples_count;
-	(void)mask;
-	(void)cyclic;
+	unsigned int i, nb_channels = iio_device_get_channels_count(dev);
+	size_t nb_words = (nb_channels + 31) / 32;
+	unsigned int word = 0;
+	char buf[9];
 
-	print_value(pdata, -ENOSYS);
-	return -ENOSYS;
-}
+	if (strlen(mask) != nb_words * 8)
+		return -EINVAL;
 
-/* Stub - to be implemented. */
-int close_dev(struct parser_pdata *pdata, struct iio_device *dev)
-{
-	(void)pdata;
-	(void)dev;
+	for (i = 0; i < nb_channels; i++) {
+		if (!(i % 32)) {
+			/* Word n sits at offset (nb_words - 1 - n) * 8 */
+			memcpy(buf, mask + (nb_words - 1 - i / 32) * 8, 8);
+			buf[8] = '\0';
+			if (sscanf(buf, "%08x", &word) != 1)
+				return -EINVAL;
+		}
 
-	/* No device can be open yet (open_dev fails), so this is only reached
-	 * via the explicit CLOSE command. Reply quietly with success to keep the
-	 * client's state machine happy. TODO: check flow reaching this point*/
+		if (word & (1u << (i % 32)))
+			iio_channel_enable(iio_device_get_channel(dev, i),
+					   chn_mask);
+	}
+
 	return 0;
 }
 
-/* Stub - to be implemented. */
+/* Same line as send_data() in ops.c writes ahead of the first chunk. */
+static ssize_t v0_send_mask(struct parser_pdata *pdata, const struct v0_stream *s)
+{
+	unsigned int i, nb_channels = iio_device_get_channels_count(s->dev);
+	unsigned int nb_words = (nb_channels + 31) / 32;
+	char buf[8 * 4 + 2], *ptr = buf;
+
+	if (nb_words > 4)
+		return -ENOSPC;
+
+	for (i = nb_words; i > 0; i--, ptr += 8) {
+		unsigned int j, word = 0;
+
+		for (j = 0; j < 32 && (i - 1) * 32 + j < nb_channels; j++) {
+			const struct iio_channel *chn;
+
+			chn = iio_device_get_channel(s->dev, (i - 1) * 32 + j);
+			if (iio_channel_is_enabled(chn, s->mask))
+				word |= 1u << j;
+		}
+
+		snprintf(ptr, 9, "%08x", word);
+	}
+
+	*ptr++ = '\n';
+
+	return write_all(pdata, buf, ptr - buf);
+}
+
+/* Accepted for compatibility; the single-block stream ignores the count. */
+int set_buffers_count(struct parser_pdata *pdata, struct iio_device *dev, long value)
+{
+	int ret = 0;
+
+	if (value < 1)
+		ret = -EINVAL;
+	else if (!dev)
+		ret = -ENODEV;
+
+	print_value(pdata, ret);
+	return ret;
+}
+
+int open_dev(struct parser_pdata *pdata, struct iio_device *dev, size_t samples_count,
+		const char *mask, bool cyclic)
+{
+	struct v0_stream *s = &v0_stream;
+	struct iio_buffer *buf;
+	int ret;
+
+	if (!dev) {
+		ret = -ENODEV;
+		goto out_print_value;
+	}
+
+	if (s->dev) {
+		ret = -EBUSY;
+		goto out_print_value;
+	}
+
+	buf = iio_device_get_buffer(dev, 0);
+	if (!buf) {
+		ret = -ENODEV;
+		goto out_print_value;
+	}
+
+	s->dev = dev;
+	s->cyclic = cyclic;
+	s->is_output = iio_buffer_is_output(buf);
+
+	s->mask = iio_create_channels_mask(iio_device_get_channels_count(dev));
+	if (!s->mask) {
+		ret = -ENOMEM;
+		goto err_free_stream;
+	}
+
+	ret = v0_parse_mask(dev, mask, s->mask);
+	if (ret)
+		goto err_free_stream;
+
+	ret = (int)iio_device_get_sample_size(dev, s->mask);
+	if (ret <= 0) {
+		ret = ret ? ret : -EINVAL;
+		goto err_free_stream;
+	}
+
+	s->sample_size = (size_t)ret;
+	s->block_size = samples_count * s->sample_size;
+
+	s->buf_stream = iio_buffer_open(buf, s->mask);
+	ret = iio_err(s->buf_stream);
+	if (ret) {
+		s->buf_stream = NULL;
+		goto err_free_stream;
+	}
+
+	s->block = iio_buffer_stream_create_block(s->buf_stream, s->block_size);
+	ret = iio_err(s->block);
+	if (ret) {
+		s->block = NULL;
+		goto err_free_stream;
+	}
+
+	/* Input only: queue the empty block so the first READBUF has data */
+	if (!s->is_output) {
+		ret = iio_block_enqueue(s->block, 0, false);
+		if (ret)
+			goto err_free_stream;
+
+		s->enqueued = true;
+	}
+
+	ret = iio_buffer_stream_start(s->buf_stream);
+	if (ret)
+		goto err_free_stream;
+
+	goto out_print_value;
+
+err_free_stream:
+	v0_stream_free(s);
+out_print_value:
+	print_value(pdata, ret);
+	return ret;
+}
+
+int close_dev(struct parser_pdata *pdata, struct iio_device *dev)
+{
+	int ret = 0;
+
+	if (!dev)
+		ret = -ENODEV;
+	else if (v0_stream.dev != dev)
+		ret = -ENXIO;
+	else
+		v0_stream_free(&v0_stream);
+
+	print_value(pdata, ret);
+	return ret;
+}
+
+/* Mirrors rw_thd()/send_data() in ops.c for one reader, no demux. */
+static ssize_t v0_read(struct parser_pdata *pdata, struct v0_stream *s,
+		       unsigned int nb)
+{
+	bool send_mask = true;
+	ssize_t ret;
+
+	while (nb >= s->sample_size) {
+		size_t len;
+
+		ret = iio_block_dequeue(s->block, false);
+		if (ret < 0)
+			return ret;
+
+		s->enqueued = false;
+
+		len = V0_MIN(s->block_size, nb);
+
+		print_value(pdata, (long)len);
+
+		if (send_mask) {
+			ret = v0_send_mask(pdata, s);
+			if (ret < 0)
+				return ret;
+
+			send_mask = false;
+		}
+
+		ret = write_all(pdata, iio_block_start(s->block), len);
+		if (ret < 0)
+			return ret;
+
+		nb -= len;
+
+		ret = iio_block_enqueue(s->block, 0, false);
+		if (ret)
+			return ret;
+
+		s->enqueued = true;
+	}
+
+	return nb;
+}
+
+/* Mirrors rw_thd()/receive_data() in ops.c for one writer, no mux. */
+static ssize_t v0_write(struct parser_pdata *pdata, struct v0_stream *s,
+			unsigned int nb)
+{
+	ssize_t ret;
+
+	/* Inform that no error occurred, and that we'll start reading data */
+	print_value(pdata, 0);
+
+	while (nb >= s->sample_size) {
+		size_t len;
+
+		/* A cyclic block is never handed back */
+		if (s->enqueued && !s->cyclic) {
+			ret = iio_block_dequeue(s->block, false);
+			if (ret < 0)
+				return ret;
+
+			s->enqueued = false;
+		}
+
+		len = V0_MIN(s->block_size, nb);
+
+		ret = read_all(pdata, iio_block_start(s->block), len);
+		if (ret < 0)
+			return ret;
+
+		nb -= len;
+
+		ret = iio_block_enqueue(s->block, len, s->cyclic);
+		if (ret)
+			return ret;
+
+		s->enqueued = true;
+	}
+
+	return nb;
+}
+
 ssize_t rw_dev(struct parser_pdata *pdata, struct iio_device *dev, unsigned int nb, bool is_write)
 {
-	(void)dev;
-	(void)nb;
-	(void)is_write;
+	struct v0_stream *s = &v0_stream;
+	ssize_t ret;
 
-	print_value(pdata, -ENOSYS);
-	return -ENOSYS;
+	if (!dev)
+		ret = -ENODEV;
+	else if (s->dev != dev)
+		ret = -EBADF;
+	else if (is_write != s->is_output)
+		ret = -EINVAL;
+	else if (nb < s->sample_size)
+		ret = 0;
+	else {
+		ret = is_write ? v0_write(pdata, s, nb) : v0_read(pdata, s, nb);
+
+		/* Same replies as rw_buffer() in ops.c; ret is what is left */
+		if (ret > 0 && ret < (ssize_t)nb)
+			print_value(pdata, 0);
+		if (ret >= 0)
+			ret = nb - ret;
+	}
+
+	if (ret <= 0 || is_write)
+		print_value(pdata, ret);
+	return ret;
 }
 
 /*
@@ -538,8 +807,13 @@ ssize_t read_line(struct parser_pdata *pdata, char *buf, size_t len)
 
 	while (len) {
 		ssize_t ret = pdata->readfd(pdata, buf, 1);
-		if (ret < 0)
+		if (ret < 0) {
+			/* The transport timed out or went away: end the
+			 * session, as EOF does, instead of answering -EINVAL
+			 * forever on a dead link. */
+			pdata->stop = true;
 			return ret;
+		}
 
 		bytes_read++;
 
@@ -564,9 +838,8 @@ void enable_binary(struct parser_pdata *pdata)
 }
 
 /* Differs from ascii_interpreter() in ops.c: the yylex/yyparse loop is the
- * same, but the trailing per-device cleanup loop (close_dev_helper() over every
- * device) is omitted. That loop tears down the POSIX RW threads, which do not
- * exist here; no device can be open yet, so there is nothing to tear down. */
+ * same, but the trailing cleanup only has the single v0 stream to tear down,
+ * for a client that went away without a CLOSE. */
 void ascii_interpreter(struct parser_pdata *pdata)
 {
 	yyscan_t scanner;
@@ -579,4 +852,7 @@ void ascii_interpreter(struct parser_pdata *pdata)
 	} while (!pdata->stop && !pdata->binary && ret >= 0);
 
 	yylex_destroy(scanner);
+
+	if (v0_stream.dev)
+		v0_stream_free(&v0_stream);
 }
