@@ -163,8 +163,14 @@ resolve_network() {
 }
 
 resolve_usb() {
-	lsusb -d "$USB_VID_PID" >/dev/null 2>&1 || \
-		die "no $USB_VID_PID device visible; attach it with usbipd first"
+	local deadline=$((SECONDS + 60))
+
+	# The board re-enumerates after the flash; give usbipd time to attach it
+	until lsusb -d "$USB_VID_PID" >/dev/null 2>&1; do
+		[ "$SECONDS" -lt "$deadline" ] || \
+			die "no $USB_VID_PID device visible; attach it with usbipd first"
+		sleep 1
+	done
 
 	URI="usb:"
 }
