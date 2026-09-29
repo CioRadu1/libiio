@@ -4,20 +4,69 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <stdbool.h>
 #include <string.h>
 #include <errno.h>
 #include <no_os_uart.h>
 #include <no_os_print_log.h>
 #include <no_os_delay.h>
+#include <no_os_util.h>
 #include <tinyiiod/tinyiiod.h>
 #include "parameters.h"
 #include "iio_device.h"
+
+/* Size of a binary iiod_command header */
+#define IIOD_UART_HDR_LEN	8
+
+/*
+ * The uart has no disconnect, so after a v1 client leaves the next client
+ * still meets the binary parser. A v0 client opens with "PRINT\r\n" (7
+ * bytes) or "ZPRINT\r\n" (8): a text line that arrives while a header is
+ * awaited ends the binary session and is handed to the ASCII parser.
+ */
+static uint8_t iiod_uart_replay[IIOD_UART_HDR_LEN];
+static size_t iiod_uart_replay_len, iiod_uart_replay_pos;
+
+/**
+ * @brief Tell whether a partial header is a whole v0 command line.
+ * @param buf - Bytes received so far.
+ * @param len - Number of bytes in buf.
+ * @return true if buf is printable text ending in a newline.
+ */
+static bool iiod_uart_is_v0_line(const uint8_t *buf, size_t len)
+{
+	size_t i;
+
+	if (len < 2 || buf[len - 1] != '\n')
+		return false;
+
+	/* Answered by the responder itself */
+	if (!memcmp(buf, "BINARY\r\n", no_os_min(len, IIOD_UART_HDR_LEN)))
+		return false;
+
+	for (i = 0; i < len; i++)
+		if ((buf[i] < ' ' || buf[i] > '~') && buf[i] != '\r' &&
+		    buf[i] != '\n')
+			return false;
+
+	return true;
+}
 
 static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	struct no_os_uart_desc *uart = (struct no_os_uart_desc *)pdata;
 	uint32_t total = 0;
 	int32_t ret;
+
+	if (iiod_uart_replay_pos < iiod_uart_replay_len) {
+		size_t n;
+
+		n = no_os_min(size, iiod_uart_replay_len - iiod_uart_replay_pos);
+		memcpy(buf, iiod_uart_replay + iiod_uart_replay_pos, n);
+		iiod_uart_replay_pos += n;
+
+		return (ssize_t)n;
+	}
 
 	while (total < size) {
 		ret = no_os_uart_read(uart, (uint8_t *)buf + total,
@@ -29,6 +78,16 @@ static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
 		}
 
 		total += ret;
+
+		/* Only the binary parser asks for a whole header at once */
+		if (size == IIOD_UART_HDR_LEN &&
+		    iiod_uart_is_v0_line(buf, total)) {
+			memcpy(iiod_uart_replay, buf, total);
+			iiod_uart_replay_len = total;
+			iiod_uart_replay_pos = 0;
+
+			return -EPIPE;
+		}
 	}
 
 	return (ssize_t)size;
