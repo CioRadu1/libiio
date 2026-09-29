@@ -18,12 +18,13 @@ USB_VID_PID=0456:b673
 UTIL_TIMEOUT=${UTIL_TIMEOUT:-40}
 STREAM_SAMPLES=${STREAM_SAMPLES:-256}
 UTIL_NAMES="iio_info iio_attr iio_rwdev"
+V0_BUILD=${NOOS_V0_BUILD:-}
 
 ADC_DEV=iio-adc
 ADC_CHN=voltage0
 GAME_DEV=snake
 
-ALL_GROUPS="info context adc game stream"
+ALL_GROUPS="info context adc game stream stream_v0"
 RUN_GROUPS=$ALL_GROUPS
 
 usage() {
@@ -41,6 +42,8 @@ Groups (default: all, in this order):
   adc       iio_attr on the adc channel and device attributes
   game      iio_attr round-trips on the sample device
   stream    iio_rwdev captures a buffer of samples
+  stream_v0 a libiio v0 iio_readdev captures one, then iio_rwdev again
+            (skipped unless NOOS_V0_BUILD is set)
 
 Environment overrides:
   NOOS_TESTS_PORT   serial device for the uart protocol (default: autodetect)
@@ -49,7 +52,8 @@ Environment overrides:
   NOOS_HOST_BUILD   host libiio build directory (default: <libiio>/build)
   NOOS_UTILS_DIR    directory holding iio_info/iio_attr/iio_rwdev
   UTIL_TIMEOUT      seconds a single utility may run (default: 40)
-  STREAM_SAMPLES    samples captured by the stream group (default: 256)
+  STREAM_SAMPLES    samples captured by the stream groups (default: 256)
+  NOOS_V0_BUILD     libiio v0.x build directory holding tests/iio_readdev
   SKIP_FLASH=1      reuse whatever is already running on the board
 USAGE
 	exit 1
@@ -197,6 +201,7 @@ read_geometry() {
 passed=0
 failed=0
 timedout=0
+skipped=0
 group_failed=0
 results=""
 OUT=""
@@ -437,37 +442,80 @@ group_game() {
 	assert_eq "$OUT" "0" "a reset clears the score"
 }
 
-group_stream() {
-	local capture bytes max distinct
-
-	capture=$(mktemp)
-
-	LD_LIBRARY_PATH=$HOST_BUILD timeout "$UTIL_TIMEOUT" \
-		"$UTILS_DIR/iio_rwdev" -u "$URI" -s "$STREAM_SAMPLES" \
-		"$ADC_DEV" "$ADC_CHN" >"$capture" 2>/dev/null
-	RC=$?
-	OUT=""
-
-	[ "$RC" != "124" ] || timedout=$((timedout + 1))
-	assert_rc 0 "iio_rwdev captures $STREAM_SAMPLES samples"
+# Check a capture of STREAM_SAMPLES be:u12/16 samples; $2 names the client
+check_capture() {
+	local capture=$1 client=$2 bytes max distinct
 
 	bytes=$(wc -c <"$capture" | count)
 	assert_eq "$bytes" "$((STREAM_SAMPLES * 2))" \
-		  "the capture is $((STREAM_SAMPLES * 2)) bytes"
+		  "the $client capture is $((STREAM_SAMPLES * 2)) bytes"
 
 	max=$(od -An -tu2 --endian=big -v "$capture" | tr ' ' '\n' | grep -E '^[0-9]+$' | \
 	      sort -n | tail -1)
 	distinct=$(od -An -tu2 --endian=big -v "$capture" | tr ' ' '\n' | \
 		   grep -E '^[0-9]+$' | sort -u | wc -l | count)
 
-	assert_int_in "${max:-0}" 0 4095 "every sample fits the 12-bit range"
+	assert_int_in "${max:-0}" 0 4095 "every $client sample fits the 12-bit range"
 
 	if [ "${distinct:-0}" -gt 1 ]; then
-		pass "the capture is not a constant pattern"
+		pass "the $client capture is not a constant pattern"
 	else
-		fail "the capture is not a constant pattern" \
+		fail "the $client capture is not a constant pattern" \
 		     "$distinct distinct value(s)"
 	fi
+}
+
+# Capture STREAM_SAMPLES samples with the v1 iio_rwdev into $1
+capture_v1() {
+	LD_LIBRARY_PATH=$HOST_BUILD timeout "$UTIL_TIMEOUT" \
+		"$UTILS_DIR/iio_rwdev" -u "$URI" -s "$STREAM_SAMPLES" \
+		"$ADC_DEV" "$ADC_CHN" >"$1" 2>/dev/null
+	RC=$?
+	OUT=""
+
+	[ "$RC" != "124" ] || timedout=$((timedout + 1))
+}
+
+group_stream() {
+	local capture
+
+	capture=$(mktemp)
+
+	capture_v1 "$capture"
+	assert_rc 0 "iio_rwdev captures $STREAM_SAMPLES samples"
+	check_capture "$capture" "v1"
+
+	rm -f "$capture"
+}
+
+group_stream_v0() {
+	local capture
+
+	if [ -z "$V0_BUILD" ]; then
+		skipped=$((skipped + 1))
+		echo "    SKIP  NOOS_V0_BUILD is not set"
+		return
+	fi
+
+	[ -x "$V0_BUILD/tests/iio_readdev" ] || \
+		die "no tests/iio_readdev in $V0_BUILD"
+
+	capture=$(mktemp)
+
+	# v0 speaks the ascii protocol: OPEN, READBUF and CLOSE
+	OUT=$(LD_LIBRARY_PATH=$V0_BUILD timeout "$UTIL_TIMEOUT" \
+		"$V0_BUILD/tests/iio_readdev" -u "$URI" -s "$STREAM_SAMPLES" \
+		"$ADC_DEV" "$ADC_CHN" 2>&1 >"$capture")
+	RC=$?
+
+	[ "$RC" != "124" ] || timedout=$((timedout + 1))
+	assert_rc 0 "the v0 iio_readdev captures $STREAM_SAMPLES samples"
+	check_capture "$capture" "v0"
+
+	# The board must hand the link back to a v1 client afterwards
+	capture_v1 "$capture"
+	assert_rc 0 "iio_rwdev still captures after the v0 client"
+	check_capture "$capture" "v1"
 
 	rm -f "$capture"
 }
@@ -516,6 +564,6 @@ done
 echo
 echo "== $PROTO utility summary ($URI) =="
 printf '%b\n' "$results"
-echo "  passed $passed, failed $failed, timed out $timedout"
+echo "  passed $passed, failed $failed, timed out $timedout, skipped $skipped"
 
 [ "$failed" -eq 0 ]
