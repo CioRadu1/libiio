@@ -47,6 +47,8 @@ set(IIOD_STACK_SIZE 0x10000 CACHE STRING "Main stack size (bytes)")
 target_compile_definitions(no-os PRIVATE __STACK_SIZE=${IIOD_STACK_SIZE})
 
 # ---------- ADC: parts the common_api HAL has been brought up on ----------
+# The IIO device takes the part's name, e.g. max32690-adc.
+list(APPEND IIOD_PLATFORM_DEFS IIO_ADC_NAME="${TARGET}-adc")
 if(TARGET_NUM STREQUAL "32690")
   _maxim_add_msdk(ADC adc_me18 adc_revb)
   list(APPEND IIOD_PLATFORM_DEFS IIO_ADC_CLOCK=MXC_ADC_CLK_IBRO)

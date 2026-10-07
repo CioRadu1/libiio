@@ -46,6 +46,7 @@ static int adc_demo_read_raw(unsigned int channel, int *value)
 }
 
 const struct iio_adc_hal iio_adc_hal = {
+	.name            = "adc-demo",
 	.channels        = adc_demo_channels,
 	.num_channels    = NO_OS_ARRAY_SIZE(adc_demo_channels),
 	.resolution_bits = 16,

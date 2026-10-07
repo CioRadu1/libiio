@@ -20,7 +20,7 @@ STREAM_SAMPLES=${STREAM_SAMPLES:-256}
 UTIL_NAMES="iio_info iio_attr iio_rwdev"
 V0_BUILD=${NOOS_V0_BUILD:-}
 
-ADC_DEV=iio-adc
+ADC_DEV=${NOOS_TESTS_DEVICE:-max32690-adc}
 ADC_CHN=voltage0
 GAME_DEV=snake
 
@@ -51,6 +51,7 @@ Environment overrides:
   NOOS_TESTS_URI    full libiio URI, skips all detection
   NOOS_HOST_BUILD   host libiio build directory (default: <libiio>/build)
   NOOS_UTILS_DIR    directory holding iio_info/iio_attr/iio_rwdev
+  NOOS_TESTS_DEVICE adc device name (default: max32690-adc)
   UTIL_TIMEOUT      seconds a single utility may run (default: 40)
   STREAM_SAMPLES    samples captured by the stream groups (default: 256)
   NOOS_V0_BUILD     libiio v0.x build directory holding tests/iio_readdev

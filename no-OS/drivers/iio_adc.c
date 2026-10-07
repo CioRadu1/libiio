@@ -585,7 +585,7 @@ int iio_adc_get_device_info(struct noos_iio_device_info *info)
 		return -EINVAL;
 
 	*info = (struct noos_iio_device_info) {
-		.name = "iio-adc",
+		.name = iio_adc_hal.name ? iio_adc_hal.name : "iio-adc",
 		.add_channels = iio_adc_add_channels,
 		.read_attr = iio_adc_read_attr,
 		.write_attr = iio_adc_write_attr,

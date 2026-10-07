@@ -38,6 +38,7 @@ Environment overrides:
   NOOS_TESTS_PORT   serial device for the uart protocol (default: autodetect)
   NOOS_TESTS_HOST   board address for the network protocol (default: 192.0.2.1)
   NOOS_TESTS_URI    full libiio URI, skips all detection
+  NOOS_TESTS_DEVICE adc device name (default: max32690-adc)
   MAX_PARALLEL      concurrent clients for network-multi (default: 4)
   SKIP_FLASH=1      reuse whatever is already running on the board
   QUIET_BUILD=1     hide the compiler output

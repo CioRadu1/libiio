@@ -44,6 +44,8 @@ enum iio_adc_reference {
 };
 
 struct iio_adc_hal {
+	/* IIO device name, e.g. the part ("max32690-adc"); NULL for "iio-adc" */
+	const char        *name;
 	const char *const *channels;
 	unsigned int       num_channels;
 	unsigned int       resolution_bits;

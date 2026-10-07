@@ -9,6 +9,11 @@
 #include <no_os_util.h>
 #include "common_api.h"
 
+/* The part's own ADC, e.g. "max32690-adc": platform.cmake sets it per TARGET. */
+#ifndef IIO_ADC_NAME
+#define IIO_ADC_NAME	"maxim-adc"
+#endif
+
 #define ADC_POLL_TIMEOUT 1000000
 
 static const char *const maxim_adc_channels[IIO_ADC_NUM_CHANNELS] = {
@@ -178,6 +183,7 @@ static int maxim_adc_read_raw(unsigned int channel, int *value)
 #endif /* MAXIM_ADC_REVB */
 
 const struct iio_adc_hal iio_adc_hal = {
+	.name            = IIO_ADC_NAME,
 	.channels        = maxim_adc_channels,
 	.num_channels    = NO_OS_ARRAY_SIZE(maxim_adc_channels),
 	.resolution_bits = MAXIM_ADC_RESOLUTION_BITS,

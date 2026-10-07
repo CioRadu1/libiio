@@ -58,9 +58,17 @@ static inline void test_log(const char *tag, const char *fmt, ...)
 		TEST_ASSERT_STR_EQ(test_val, (expected), message);	\
 	} while (0)
 
-#define TEST_DEVICE_NAME	"iio-adc"
+/* The adc is named after the part; override for another board. */
+#define TEST_DEVICE_NAME	test_device_name()
 #define TEST_DEVICE_ID		"iio:device0"
 #define TEST_CTX_OPEN_RETRIES	8
+
+static inline const char *test_device_name(void)
+{
+	const char *name = getenv("NOOS_TESTS_DEVICE");
+
+	return name && name[0] ? name : "max32690-adc";
+}
 
 static const struct iio_context_params test_ctx_params = {
 	.log_level = LEVEL_WARNING,
