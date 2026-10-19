@@ -126,7 +126,7 @@ typedef int (*noos_iio_enable_buffer_t)(void *dev, bool enable);
 `noos_iio_devices[NOOS_IIO_MAX_DEVICES]` (16) and bumps `noos_iio_device_count`.
 Registration must happen **before** `iio_create_context`, because the context is
 built from a snapshot of that table. `samples/iiod/main.c:noos_register_devices`
-registers `iio-adc`, then the `timer0` trigger, then the snake game.
+registers the ADC, then the `timer0` trigger.
 
 Still not carried: events.
 
@@ -605,9 +605,8 @@ client can tell an enqueue failure from a dequeue failure in one status word.
 
 There is no shared value-formatting module any more; each device class formats
 its own attributes with small `snprintf` helpers that check for truncation
-(`adc_emit_*` in `iio_adc.c`, `snake_emit_*` in `samples/iiod/main.c`, the
-`sampling_frequency` read in `iio_trigger_timer.c`). The text forms match what a
-Linux IIO driver prints: plain integers, `int.micro` with six fractional digits
+(`adc_emit_*` in `iio_adc.c`, the `sampling_frequency` read in
+`iio_trigger_timer.c`). The text forms match what a Linux IIO driver prints: plain integers, `int.micro` with six fractional digits
 for `scale`, and bare strings for enumerations. A read returns the length
 **including** the terminating NUL, as the responder expects.
 
@@ -752,7 +751,7 @@ Gotchas:
   startup file is compiled) from `IIOD_STACK_SIZE`, default 64 KiB — as no-OS
   does itself for aducm3029.
 - no-OS's Maxim include path uses the MSDK's old CMSIS 4 `core_cm4.h`, which has
-  no `NVIC_GetEnableIRQ`. `iio_usb_backend.c` reads `NVIC->ISER` instead.
+  no `NVIC_GetEnableIRQ`. `iio_usb_maxim.c` reads `NVIC->ISER` instead.
 - `CONFIG_ADIN1110` is inside `menuconfig NET`, so `CONFIG_NET=y` is required.
 - `post_build_config` writes `.vscode/` launch configs into this directory.
 - under WSL2, `usbip` must be re-attached after every flash.

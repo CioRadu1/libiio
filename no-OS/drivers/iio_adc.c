@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include "iio_device.h"
 #include "iio_adc.h"
 #include "iio_adc_hal.h"
 #include "iio_trigger_timer.h"
@@ -63,6 +64,9 @@ struct adc_channel_state {
 
 static struct adc_channel_state chan_state[IIO_ADC_MAX_CHANNELS];
 
+/*
+ * Format an int attr value; returns the length with the NUL, as libiio wants.
+ */
 static int adc_emit_int(char *dst, size_t len, int val)
 {
 	int ret = snprintf(dst, len, "%d", val);
@@ -73,6 +77,7 @@ static int adc_emit_int(char *dst, size_t len, int val)
 	return ret + 1;
 }
 
+/* Format a string attr value; returns the length with the NUL. */
 static int adc_emit_str(char *dst, size_t len, const char *val)
 {
 	int ret = snprintf(dst, len, "%s", val);
@@ -83,6 +88,7 @@ static int adc_emit_str(char *dst, size_t len, const char *val)
 	return ret + 1;
 }
 
+/* Format a value as "int.micro" (e.g. scale 0.305175), like Linux IIO. */
 static int adc_emit_micro(char *dst, size_t len, int val, int val2)
 {
 	int ret;
@@ -99,6 +105,7 @@ static int adc_emit_micro(char *dst, size_t len, int val, int val2)
 	return ret + 1;
 }
 
+/* Parse a written integer, allowing the newline echo adds. */
 static int adc_parse_int(const char *src, int *val)
 {
 	char *end;
@@ -122,6 +129,7 @@ static int adc_parse_int(const char *src, int *val)
 	return 0;
 }
 
+/* Parse a written "1.234567" into its integer and micro parts. */
 static int adc_parse_micro(const char *src, int *val, int *val2)
 {
 	int integer = 0, fract = 0, mult = 100000;
@@ -168,6 +176,7 @@ static int adc_parse_micro(const char *src, int *val, int *val2)
 	return 0;
 }
 
+/* Find a written string (gain "1/2", reference "VDD") in a table. */
 static int adc_lookup_str(const char *const *table, size_t count,
 			  const char *src, size_t len)
 {
@@ -185,6 +194,7 @@ static int adc_lookup_str(const char *const *table, size_t count,
 	return -EINVAL;
 }
 
+/* Map a channel id like "voltage0" to its HAL channel number. */
 static int adc_channel_index(const char *id)
 {
 	unsigned int i, n = iio_adc_hal.num_channels;
@@ -199,6 +209,7 @@ static int adc_channel_index(const char *id)
 	return -EINVAL;
 }
 
+/* Default channel settings: gain 1, internal reference, single-ended. */
 static void iio_adc_state_init(void)
 {
 	unsigned int i;
@@ -331,6 +342,7 @@ static int iio_adc_read_samples(void *dev, const struct iio_device *iio_dev,
 	return 0;
 }
 
+/* Buffer on/off hook: stops the trigger timer when streaming ends. */
 static int iio_adc_enable_buffer(void *dev, bool enable)
 {
 	/* The first read of the next stream starts the trigger again. */
@@ -340,6 +352,10 @@ static int iio_adc_enable_buffer(void *dev, bool enable)
 	return 0;
 }
 
+/*
+ * One input channel per HAL channel, with its attributes: what iio_info
+ * shows under iio-adc.
+ */
 static int iio_adc_add_channels(void *dev, struct iio_device *iio_dev)
 {
 	struct iio_data_format fmt;
@@ -374,6 +390,10 @@ static int iio_adc_add_channels(void *dev, struct iio_device *iio_dev)
 	return 0;
 }
 
+/*
+ * Serve raw (one conversion), scale, gain, reference, differential,
+ * process (mV) and internal_ref_voltage.
+ */
 static int iio_adc_read_attr(void *dev,
 			     const struct iio_device *iio_dev,
 			     const struct iio_attr *attr,
@@ -446,6 +466,10 @@ static int iio_adc_read_attr(void *dev,
 	return -EINVAL;
 }
 
+/*
+ * Store scale/gain/reference/differential; gain and reference also go to
+ * the HAL when it supports them.
+ */
 static int iio_adc_write_attr(void *dev,
 			      const struct iio_device *iio_dev,
 			      const struct iio_attr *attr,
@@ -543,6 +567,7 @@ static int iio_adc_write_attr(void *dev,
 #define ADC_NUM_REGS 16
 static uint32_t adc_regs[ADC_NUM_REGS];
 
+/* Debug registers: a 16-word scratch array, handy for trying iio_reg. */
 static int iio_adc_reg_read(void *dev, uint32_t reg, uint32_t *val)
 {
 	if (reg >= ADC_NUM_REGS)
@@ -553,6 +578,7 @@ static int iio_adc_reg_read(void *dev, uint32_t reg, uint32_t *val)
 	return 0;
 }
 
+/* Write one of the scratch debug registers. */
 static int iio_adc_reg_write(void *dev, uint32_t reg, uint32_t val)
 {
 	if (reg >= ADC_NUM_REGS)
@@ -563,6 +589,7 @@ static int iio_adc_reg_write(void *dev, uint32_t reg, uint32_t val)
 	return 0;
 }
 
+/* Init the ADC through the HAL and the trigger that paces it; from main(). */
 int iio_adc_init(void)
 {
 	int ret;
@@ -579,6 +606,7 @@ int iio_adc_init(void)
 	return iio_trigger_timer_init();
 }
 
+/* Describe iio-adc for noos_iio_register_device(); timer0 is its trigger. */
 int iio_adc_get_device_info(struct noos_iio_device_info *info)
 {
 	if (!info)

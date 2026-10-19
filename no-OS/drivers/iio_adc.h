@@ -7,7 +7,7 @@
 #ifndef IIO_ADC_H
 #define IIO_ADC_H
 
-#include "iio_device.h"
+struct noos_iio_device_info;
 
 int iio_adc_init(void);
 int iio_adc_get_device_info(struct noos_iio_device_info *info);

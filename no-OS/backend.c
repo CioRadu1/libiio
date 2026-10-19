@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <no_os_print_log.h>
 #include <iio_device.h>
+#include <iio_board.h>
 
 #define NOOS_BACKEND_VERSION "no-OS 1.0 " __DATE__ " " __TIME__
 
@@ -30,6 +31,10 @@ struct iio_block_pdata {
 	int error;
 };
 
+/*
+ * libiio opens a device buffer: remember the device and its channel mask
+ * for the block transfers that follow.
+ */
 static struct iio_buffer_pdata *
 noos_open_buffer(const struct iio_device *dev,
 		 unsigned int idx,
@@ -46,12 +51,17 @@ noos_open_buffer(const struct iio_device *dev,
 	return pdata;
 }
 
+/* Get the driver info (callbacks + dev) a device was registered with. */
 static struct noos_iio_device_info *
 noos_buffer_info(const struct iio_buffer_pdata *pdata)
 {
 	return (struct noos_iio_device_info *)iio_device_get_pdata(pdata->dev);
 }
 
+/*
+ * Start/stop streaming; calls the driver's enable_buffer only on a change
+ * (iio-adc uses it to stop its trigger timer).
+ */
 static int noos_enable_buffer(struct iio_buffer_pdata *pdata,
 			      size_t nb_samples, bool enable, bool cyclic)
 {
@@ -69,6 +79,7 @@ static int noos_enable_buffer(struct iio_buffer_pdata *pdata,
 	return 0;
 }
 
+/* Buffer closed by the client: disable it if still running, then free it. */
 static void noos_close_buffer(struct iio_buffer_pdata *pdata)
 {
 	/* A client that drops the connection never disables the buffer. */
@@ -78,10 +89,12 @@ static void noos_close_buffer(struct iio_buffer_pdata *pdata)
 	free(pdata);
 }
 
+/* Nothing to cancel: every transfer here finishes before the call returns. */
 static void noos_cancel_buffer(struct iio_buffer_pdata *pdata)
 {
 }
 
+/* Direct read path: fill dst from the driver's read_samples. */
 static ssize_t noos_readbuf(struct iio_buffer_pdata *pdata,
 			    void *dst, size_t len)
 {
@@ -102,6 +115,9 @@ static ssize_t noos_readbuf(struct iio_buffer_pdata *pdata,
 	return (ssize_t)len;
 }
 
+/*
+ * Direct write path: pass src to the driver's write_samples (output devices).
+ */
 static ssize_t noos_writebuf(struct iio_buffer_pdata *pdata,
 			     const void *src, size_t len)
 {
@@ -123,6 +139,7 @@ static ssize_t noos_writebuf(struct iio_buffer_pdata *pdata,
 	return (ssize_t)len;
 }
 
+/* Allocate one block of sample memory; iiod streams through these blocks. */
 static struct iio_block_pdata *
 noos_create_block(struct iio_buffer_pdata *buf, size_t size, void **data)
 {
@@ -144,12 +161,17 @@ noos_create_block(struct iio_buffer_pdata *buf, size_t size, void **data)
 	return pdata;
 }
 
+/* Release a block made by noos_create_block(). */
 static void noos_free_block(struct iio_block_pdata *pdata)
 {
 	free(pdata->data);
 	free(pdata);
 }
 
+/*
+ * Do the transfer now: an input block is filled by read_samples, an output
+ * block goes to write_samples. The result is kept for the dequeue.
+ */
 static int noos_enqueue_block(struct iio_block_pdata *pdata,
 			      size_t bytes_used, bool cyclic)
 {
@@ -178,11 +200,16 @@ static int noos_enqueue_block(struct iio_block_pdata *pdata,
 	return 0;
 }
 
+/* The block was done at enqueue time, so just report how it went. */
 static int noos_dequeue_block(struct iio_block_pdata *pdata, bool nonblock)
 {
 	return pdata->error;
 }
 
+/*
+ * Called from main() before the context exists: adds a driver to the list
+ * noos_create_context() turns into IIO devices.
+ */
 int noos_iio_register_device(const struct noos_iio_device_info *info)
 {
 	if (!info)
@@ -195,6 +222,42 @@ int noos_iio_register_device(const struct noos_iio_device_info *info)
 	return 0;
 }
 
+/*
+ * Init and register every device of the board file, once. A device that
+ * fails is logged and left out; the rest are still served.
+ */
+static void noos_board_register(void)
+{
+	static bool done;
+	struct noos_iio_device_info info;
+	unsigned int i;
+	int ret;
+
+	if (done)
+		return;
+	done = true;
+
+	for (i = 0; i < noos_board_device_count; i++) {
+		const struct noos_board_device *bd = &noos_board_devices[i];
+
+		if (bd->init) {
+			ret = bd->init();
+			if (ret) {
+				pr_err("board device %u: init failed: %d\n", i, ret);
+				continue;
+			}
+		}
+
+		info = (struct noos_iio_device_info) { 0 };
+		ret = bd->get_info(&info);
+		if (!ret)
+			ret = noos_iio_register_device(&info);
+		if (ret)
+			pr_err("board device %u: not registered: %d\n", i, ret);
+	}
+}
+
+/* Route an attribute read (e.g. iio_attr) to the owning driver's read_attr. */
 static ssize_t
 noos_read_attr(const struct iio_attr *attr, char *dst, size_t len)
 {
@@ -208,6 +271,7 @@ noos_read_attr(const struct iio_attr *attr, char *dst, size_t len)
 	return info->read_attr(info->dev, iio_dev, attr, dst, len);
 }
 
+/* Route an attribute write to the owning driver's write_attr. */
 static ssize_t
 noos_write_attr(const struct iio_attr *attr, const char *src, size_t len)
 {
@@ -221,6 +285,7 @@ noos_write_attr(const struct iio_attr *attr, const char *src, size_t len)
 	return info->write_attr(info->dev, iio_dev, attr, src, len);
 }
 
+/* Report the trigger fixed at build time (info->trigger), e.g. timer0. */
 static const struct iio_device *
 noos_get_trigger(const struct iio_device *dev)
 {
@@ -255,6 +320,7 @@ static int noos_set_trigger(const struct iio_device *dev,
 	return trigger == fixed ? 0 : -EINVAL;
 }
 
+/* Debug register read (iio_reg), forwarded to the driver's reg_read. */
 static int noos_reg_read(const struct iio_device *dev, uint32_t address,
 			 uint32_t *value)
 {
@@ -267,6 +333,7 @@ static int noos_reg_read(const struct iio_device *dev, uint32_t address,
 	return info->reg_read(info->dev, address, value);
 }
 
+/* Debug register write (iio_reg), forwarded to the driver's reg_write. */
 static int noos_reg_write(const struct iio_device *dev, uint32_t address,
 			  uint32_t value)
 {
@@ -279,6 +346,10 @@ static int noos_reg_write(const struct iio_device *dev, uint32_t address,
 	return info->reg_write(info->dev, address, value);
 }
 
+/*
+ * Build the context behind the "no-os:" URI: one IIO device per registered
+ * driver, with its channels and a buffer holding the scan elements.
+ */
 static struct iio_context *
 noos_create_context(const struct iio_context_params *params, const char *args)
 {
@@ -287,6 +358,8 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 	unsigned int i, nb_devices = 0, nb_triggers = 0;
 	char id[32];
 	int ret;
+
+	noos_board_register();
 
 	ctx = iio_context_create_from_backend(params, &iio_external_backend,
 					      NOOS_BACKEND_VERSION, 1, 0, 0, "v1.0");

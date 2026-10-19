@@ -52,6 +52,10 @@ static bool iiod_uart_is_v0_line(const uint8_t *buf, size_t len)
 	return true;
 }
 
+/*
+ * Blocking read for the interpreter; a v0 text command seen during a v1
+ * session is kept and replayed to the ASCII parser.
+ */
 static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	struct no_os_uart_desc *uart = (struct no_os_uart_desc *)pdata;
@@ -93,6 +97,7 @@ static ssize_t iiod_uart_read(struct iiod_pdata *pdata, void *buf, size_t size)
 	return (ssize_t)size;
 }
 
+/* Write a whole reply to the uart. */
 static ssize_t iiod_uart_write(struct iiod_pdata *pdata, const void *buf,
 			       size_t size)
 {
@@ -106,6 +111,7 @@ static ssize_t iiod_uart_write(struct iiod_pdata *pdata, const void *buf,
 	return (ssize_t)size;
 }
 
+/* Build the context XML once, then serve clients one after another forever. */
 int iiod_uart_run(struct no_os_uart_desc *uart_desc)
 {
 	struct iio_context_params ctx_params = {0};
@@ -149,6 +155,7 @@ int iiod_uart_run(struct no_os_uart_desc *uart_desc)
 	return ret;
 }
 
+/* Entry point of the uart build: open the uart and run IIOD on it. */
 int noos_iiod_run(void)
 {
 	struct no_os_uart_desc *uart_desc;

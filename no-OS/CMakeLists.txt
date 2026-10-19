@@ -86,6 +86,17 @@ file(RELATIVE_PATH PROJECT_DEFCONFIG ${CMAKE_SOURCE_DIR}
 
 add_subdirectory(${NO_OS_PATH} no-os)
 
+# libiio's responder is the only IIO server here: no-OS's own (iio.c,
+# iiod.c, iio_trigger.c) and iio_app must never be built into the image.
+get_target_property(_no_os_all_srcs no-os SOURCES)
+foreach(_src IN LISTS _no_os_all_srcs)
+  if(_src MATCHES "/iio/(iio|iiod|iio_trigger)\\.c$" OR _src MATCHES "/iio_app/")
+    message(FATAL_ERROR
+      "no-OS's own IIO server is in the build (${_src}). Turn CONFIG_IIO "
+      "off: this port serves IIO through libiio only.")
+  endif()
+endforeach()
+
 # The same module path no-OS's own CMakeLists.txt uses, plus the platform's
 # cmake/<platform>/ dir; config_platform_sdk() below includes that dir's
 # <platform>_platform_sdk.cmake itself.
@@ -175,18 +186,53 @@ endif()
 if(NOT IIOD_PLATFORM_ADC)
   set(IIOD_PLATFORM_ADC adc_demo)
 endif()
-set(ADC ${IIOD_PLATFORM_ADC} CACHE STRING "ADC HAL under drivers/adc/")
-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
-  message(FATAL_ERROR "no ADC HAL drivers/adc/${ADC}/${ADC}.c")
+set(ADC ${IIOD_PLATFORM_ADC} CACHE STRING
+    "ADC HAL: platform/<PLATFORM>/adc/<adc>.c, else drivers/adc/<adc>/<adc>.c")
+if(EXISTS ${IIOD_PLATFORM_DIR}/adc/${ADC}.c)
+  set(IIOD_ADC_SRC ${IIOD_PLATFORM_DIR}/adc/${ADC}.c)
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
+  set(IIOD_ADC_SRC ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c)
+else()
+  message(FATAL_ERROR "no ADC HAL '${ADC}': neither platform/${PLATFORM}/adc/${ADC}.c "
+                      "nor drivers/adc/${ADC}/${ADC}.c")
 endif()
+
+# ---------- Existing no-OS IIO drivers (iio_<part>.c), served through libiio ----------
+set(IIOD_NOOS_DRIVER_SRCS
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_noos_driver_desc.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_noos_driver.c
+)
+set(IIOD_NOOS_DRIVER_INCLUDES "")
+set(IIOD_NOOS_DRIVER_DEFS "")
+
+# Off by default: no-OS's hardware-free adc_demo, only to check
+# iio_noos_driver.c itself (-DIIOD_NOOS_ADC_DEMO=ON).
+option(IIOD_NOOS_ADC_DEMO "Serve no-OS's adc_demo driver (self-test of iio_noos_driver.c)" OFF)
+if(IIOD_NOOS_ADC_DEMO)
+  list(APPEND IIOD_NOOS_DRIVER_SRCS
+    ${NO_OS_PATH}/drivers/adc/adc_demo/adc_demo.c
+    ${NO_OS_PATH}/drivers/adc/adc_demo/iio_adc_demo.c
+  )
+  list(APPEND IIOD_NOOS_DRIVER_INCLUDES ${NO_OS_PATH}/drivers/adc/adc_demo)
+  list(APPEND IIOD_NOOS_DRIVER_DEFS IIOD_NOOS_ADC_DEMO=1)
+endif()
+
+# ---------- Board device list: boards/<BOARD>.c, else boards/default.c ----------
+set(IIOD_BOARD_DEVICES ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD}.c)
+if(NOT EXISTS ${IIOD_BOARD_DEVICES})
+  set(IIOD_BOARD_DEVICES ${CMAKE_CURRENT_SOURCE_DIR}/boards/default.c)
+endif()
+message(STATUS "iiod devices: ${IIOD_BOARD_DEVICES}")
 
 add_executable(libiio-noos
   ${LIBIIO_SRCS}
+  ${IIOD_BOARD_DEVICES}
+  ${IIOD_NOOS_DRIVER_SRCS}
   ${CMAKE_CURRENT_SOURCE_DIR}/backend.c
   ${CMAKE_CURRENT_SOURCE_DIR}/iiod/${IIOD_TRANSPORT}.c
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_adc.c
   ${CMAKE_CURRENT_SOURCE_DIR}/drivers/iio_trigger_timer.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/drivers/adc/${ADC}/${ADC}.c
+  ${IIOD_ADC_SRC}
   ${CMAKE_CURRENT_SOURCE_DIR}/samples/iiod/main.c
   ${IIOD_PLATFORM_SRCS}
 )
@@ -201,6 +247,7 @@ target_include_directories(libiio-noos PRIVATE
   ${LIBIIO_DIR}/iiod
   ${V0_GEN_DIR}
   ${IIOD_PLATFORM_INCLUDES}
+  ${IIOD_NOOS_DRIVER_INCLUDES}
 )
 
 target_compile_definitions(libiio-noos PRIVATE
@@ -232,6 +279,7 @@ target_compile_definitions(libiio-noos PRIVATE
   LIBIIO_SCAN_BACKENDS=""
   DISABLE_SECURE_SOCKET=1
   ${IIOD_PLATFORM_DEFS}
+  ${IIOD_NOOS_DRIVER_DEFS}
 )
 
 if(IIOD_TRANSPORT STREQUAL "usb")

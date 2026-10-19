@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef IIO_ADC_COMMON_API_H
-#define IIO_ADC_COMMON_API_H
+#ifndef IIO_ADC_MAXIM_ADC_H
+#define IIO_ADC_MAXIM_ADC_H
 
 #include "iio_adc_hal.h"
 #include "adc.h"
@@ -18,7 +18,7 @@
 #define MAXIM_ADC_RESOLUTION_BITS 12
 
 #ifndef IIO_ADC_CLOCK
-#error "define IIO_ADC_CLOCK in cmake/boards/<board>.cmake"
+#error "define IIO_ADC_CLOCK for the part in platform/maxim/platform.cmake"
 #endif
 
 #ifndef IIO_ADC_REF_VOLTAGE_MV
@@ -38,7 +38,7 @@
 #endif
 
 #ifndef IIO_ADC_REF_VOLTAGE_MV
-#error "define IIO_ADC_REF_VOLTAGE_MV in cmake/boards/<board>.cmake"
+#error "define IIO_ADC_REF_VOLTAGE_MV for the part in platform/maxim/platform.cmake"
 #endif
 
 #endif /* MAXIM_ADC_REVB */
@@ -59,4 +59,4 @@
 #error "IIO_ADC_NUM_CHANNELS exceeds the AIN count of this part"
 #endif
 
-#endif /* IIO_ADC_COMMON_API_H */
+#endif /* IIO_ADC_MAXIM_ADC_H */

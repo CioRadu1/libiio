@@ -7,7 +7,7 @@
 #ifndef NOOS_DRIVERS_IIO_TRIGGER_TIMER_H_
 #define NOOS_DRIVERS_IIO_TRIGGER_TIMER_H_
 
-#include "iio_device.h"
+struct noos_iio_device_info;
 
 /* Name of the trigger device, for noos_iio_device_info.trigger. */
 #define IIO_TRIGGER_TIMER_NAME		"timer0"

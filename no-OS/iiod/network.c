@@ -43,6 +43,7 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size);
 static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 			      size_t size);
 
+/* True if the lwIP socket behind sock is still connected. */
 static bool net_sock_live(const struct tcp_socket_desc *sock)
 {
 	if (!sock || sock->id >= NO_OS_MAX_SOCKETS)
@@ -51,6 +52,7 @@ static bool net_sock_live(const struct tcp_socket_desc *sock)
 	return g_server.lwip->sockets[sock->id].state == SOCKET_CONNECTED;
 }
 
+/* Run lwIP a few rounds so pending packets (e.g. a FIN) get processed. */
 static void net_drain(struct lwip_network_desc *lwip)
 {
 	unsigned int i;
@@ -59,6 +61,10 @@ static void net_drain(struct lwip_network_desc *lwip)
 		no_os_lwip_step(lwip, NULL);
 }
 
+/*
+ * Blocking TCP read for the interpreter; a client idle for
+ * NET_READ_TIMEOUT_S is dropped so the next one can connect.
+ */
 static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	struct iiod_net_pdata *np = (struct iiod_net_pdata *)pdata;
@@ -101,6 +107,7 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 	return (ssize_t)total;
 }
 
+/* Send the whole reply, running lwIP while the TCP window is full. */
 static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 			      size_t size)
 {
@@ -141,6 +148,7 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 	return (ssize_t)total;
 }
 
+/* Free a finished client's socket and let lwIP flush the close. */
 static void net_client_close(struct tcp_socket_desc *sock, int reason)
 {
 	if (net_sock_live(sock))
@@ -153,6 +161,10 @@ static void net_client_close(struct tcp_socket_desc *sock, int reason)
 	net_drain(g_server.lwip);
 }
 
+/*
+ * TCP server on port 30431: accept one client at a time and run the
+ * interpreter for it.
+ */
 int iiod_network_run(struct lwip_network_desc *lwip_desc)
 {
 	struct iio_context_params ctx_params = {0};
@@ -252,6 +264,7 @@ err_ctx:
 	return ret;
 }
 
+/* Entry point of the network build: console, lwIP bring-up, then the server. */
 int noos_iiod_run(void)
 {
 	struct lwip_network_desc *lwip_desc;

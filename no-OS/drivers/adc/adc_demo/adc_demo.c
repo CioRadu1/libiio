@@ -24,6 +24,7 @@ static const char *const adc_demo_channels[] = {
 
 static unsigned int lut_index[NO_OS_ARRAY_SIZE(adc_demo_channels)];
 
+/* Rewind every channel to the start of the sine table. */
 static int adc_demo_init(void)
 {
 	unsigned int i;
@@ -34,6 +35,7 @@ static int adc_demo_init(void)
 	return 0;
 }
 
+/* Next sine sample: a fake ADC for testing without real hardware. */
 static int adc_demo_read_raw(unsigned int channel, int *value)
 {
 	if (channel >= NO_OS_ARRAY_SIZE(adc_demo_channels))

@@ -14,6 +14,7 @@
 #include <no_os_print_log.h>
 #include <iio/iio-backend.h>
 #include "timers.h"
+#include "iio_device.h"
 #include "iio_trigger_timer.h"
 
 /*
@@ -37,6 +38,7 @@ static struct iio_trigger_timer trig = {
 	.freq_hz = IIO_TRIGGER_TIMER_DEFAULT_HZ,
 };
 
+/* Timer interrupt: one tick per sample period. */
 static void trigger_timer_cb(void *ctx)
 {
 	trig.ticks++;
@@ -61,6 +63,7 @@ static int trigger_cb_register(void)
 	return ret;
 }
 
+/* Remove the tick callback with interrupts off, see trigger_cb_register(). */
 static void trigger_cb_unregister(void)
 {
 	no_os_irq_global_disable(trig.irq);
@@ -68,6 +71,7 @@ static void trigger_cb_unregister(void)
 	no_os_irq_global_enable(trig.irq);
 }
 
+/* One-time IRQ controller setup; the timer itself starts on the first wait. */
 int iio_trigger_timer_init(void)
 {
 	struct no_os_irq_init_param irq_ip = {
@@ -101,6 +105,7 @@ int iio_trigger_timer_init(void)
 	return ret;
 }
 
+/* Program the timer for freq_hz and enable its interrupt. */
 static int trigger_timer_start(void)
 {
 	struct no_os_timer_init_param timer_ip = {
@@ -153,6 +158,7 @@ remove_timer:
 	return ret;
 }
 
+/* Stop the timer, when streaming ends or the frequency changes. */
 void iio_trigger_timer_stop(void)
 {
 	if (!trig.running)
@@ -167,6 +173,10 @@ void iio_trigger_timer_stop(void)
 	trig.running = false;
 }
 
+/*
+ * Called by a sampling driver before each scan: blocks until the next tick,
+ * so the capture runs at sampling_frequency.
+ */
 int iio_trigger_timer_wait(void)
 {
 	int ret;
@@ -192,6 +202,7 @@ int iio_trigger_timer_wait(void)
 	return 0;
 }
 
+/* Read the trigger's sampling_frequency. */
 static int iio_trigger_timer_read_attr(void *dev,
 				       const struct iio_device *iio_dev,
 				       const struct iio_attr *attr,
@@ -210,6 +221,10 @@ static int iio_trigger_timer_read_attr(void *dev,
 	return ret + 1;
 }
 
+/*
+ * Set sampling_frequency, e.g. iio_attr -u <uri> -d timer0
+ * sampling_frequency 1000.
+ */
 static int iio_trigger_timer_write_attr(void *dev,
 					const struct iio_device *iio_dev,
 					const struct iio_attr *attr,
@@ -238,12 +253,14 @@ static int iio_trigger_timer_write_attr(void *dev,
 	return (int)len;
 }
 
+/* Expose sampling_frequency on the trigger device. */
 static int iio_trigger_timer_add_attrs(void *dev, struct iio_device *iio_dev)
 {
 	return iio_device_add_attr(iio_dev, "sampling_frequency",
 				   IIO_ATTR_TYPE_DEVICE);
 }
 
+/* Describe the timer trigger for noos_iio_register_device(). */
 int iio_trigger_timer_get_device_info(struct noos_iio_device_info *info)
 {
 	if (!info)

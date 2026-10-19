@@ -12,7 +12,6 @@ NOOS_DIR=$(dirname "$SCRIPT_DIR")
 LIBIIO_DIR=$(dirname "$NOOS_DIR")
 HOST_BUILD=${NOOS_HOST_BUILD:-$LIBIIO_DIR/build}
 UTILS_DIR=${NOOS_UTILS_DIR:-$HOST_BUILD/utils}
-SAMPLE=$NOOS_DIR/samples/iiod/main.c
 IIOD_PORT=30431
 USB_VID_PID=0456:b673
 UTIL_TIMEOUT=${UTIL_TIMEOUT:-40}
@@ -22,9 +21,8 @@ V0_BUILD=${NOOS_V0_BUILD:-}
 
 ADC_DEV=${NOOS_TESTS_DEVICE:-max32690-adc}
 ADC_CHN=voltage0
-GAME_DEV=snake
 
-ALL_GROUPS="info context adc game stream stream_v0"
+ALL_GROUPS="info context adc stream stream_v0"
 RUN_GROUPS=$ALL_GROUPS
 
 usage() {
@@ -37,10 +35,9 @@ Where run_hw_tests.sh exercises the library API, this exercises the client
 programs a user actually runs.
 
 Groups (default: all, in this order):
-  info      iio_info lists the context, the adc and the sample device
+  info      iio_info lists the context and the adc
   context   iio_attr -C and the device listing
   adc       iio_attr on the adc channel and device attributes
-  game      iio_attr round-trips on the sample device
   stream    iio_rwdev captures a buffer of samples
   stream_v0 a libiio v0 iio_readdev captures one, then iio_rwdev again
             (skipped unless NOOS_V0_BUILD is set)
@@ -191,14 +188,6 @@ wait_board() {
 	done
 }
 
-read_geometry() {
-	GAME_W=$(sed -n 's/^#define GAME_W[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$SAMPLE")
-	GAME_H=$(sed -n 's/^#define GAME_H[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$SAMPLE")
-
-	[ -n "$GAME_W" ] && [ -n "$GAME_H" ] || \
-		die "cannot read GAME_W/GAME_H from $SAMPLE"
-}
-
 passed=0
 failed=0
 timedout=0
@@ -308,8 +297,6 @@ group_info() {
 		     "$ADC_CHN keeps its 12-bit input format"
 	assert_match "$OUT" "Scan element 0: $ADC_CHN" \
 		     "$ADC_CHN is a scan element of the buffer"
-	assert_match "$OUT" "iio:device1: $GAME_DEV" \
-		     "$GAME_DEV is device 1"
 	assert_no_match "$OUT" 'value: *$' "every listed attribute has a value"
 }
 
@@ -321,7 +308,6 @@ group_context() {
 	run_util iio_attr -d
 	assert_rc 0 "iio_attr -d lists the devices"
 	assert_match "$OUT" "$ADC_DEV" "the listing names $ADC_DEV"
-	assert_match "$OUT" "$GAME_DEV" "the listing names $GAME_DEV"
 }
 
 group_adc() {
@@ -355,92 +341,6 @@ group_adc() {
 
 	attr_dev "$ADC_DEV" no_such_attr
 	assert_rc 1 "an unknown attribute is refused"
-}
-
-group_game() {
-	local dirs="up left down right" d before frame other steps state
-
-	attr_dev "$GAME_DEV" reset 1
-	assert_rc 0 "reset is accepted"
-
-	attr_dev "$GAME_DEV" score
-	assert_eq "$OUT" "0" "the score is 0 after a reset"
-
-	attr_dev "$GAME_DEV" state
-	assert_eq "$OUT" "running" "the game runs after a reset"
-
-	attr_dev "$GAME_DEV" frame
-	assert_rc 0 "a frame is readable"
-	frame=$OUT
-
-	assert_eq "$(printf '%s\n' "$frame" | wc -l | count)" "$GAME_H" \
-		  "the frame has $GAME_H rows"
-	assert_eq "$(printf '%s\n' "$frame" | \
-		     awk -v w="$GAME_W" 'length($0) != w' | wc -l | count)" "0" \
-		  "every row is $GAME_W cells wide"
-	assert_eq "$(printf '%s' "$frame" | tr -cd '@' | wc -c | count)" "1" \
-		  "the frame holds exactly one head"
-	assert_eq "$(printf '%s' "$frame" | tr -d '.@o*\n' | wc -c | count)" "0" \
-		  "the frame uses only the game glyphs"
-
-	attr_dev "$GAME_DEV" frame
-	other=$OUT
-
-	if [ "$frame" != "$other" ]; then
-		pass "reading a frame advances the game"
-	else
-		fail "reading a frame advances the game" "two frames are identical"
-	fi
-
-	for d in $dirs; do
-		attr_dev "$GAME_DEV" direction "$d"
-		attr_dev "$GAME_DEV" frame
-		attr_dev "$GAME_DEV" direction
-		assert_eq "$OUT" "$d" "steering $d takes effect on the next tick"
-	done
-
-	attr_dev "$GAME_DEV" direction w
-	attr_dev "$GAME_DEV" frame
-	attr_dev "$GAME_DEV" direction
-	assert_eq "$OUT" "up" "a single wasd key steers too"
-
-	attr_dev "$GAME_DEV" direction
-	before=$OUT
-	attr_dev "$GAME_DEV" direction sideways
-	attr_dev "$GAME_DEV" frame
-	attr_dev "$GAME_DEV" direction
-	assert_eq "$OUT" "$before" "a word that only starts like a key is ignored"
-
-	attr_dev "$GAME_DEV" direction nowhere
-	attr_dev "$GAME_DEV" frame
-	attr_dev "$GAME_DEV" direction
-	assert_eq "$OUT" "$before" "an unknown direction is ignored"
-
-	attr_dev "$GAME_DEV" reset 1
-	attr_dev "$GAME_DEV" direction up
-	steps=0
-	state=running
-
-	while [ "$steps" -lt $((GAME_H + 2)) ]; do
-		attr_dev "$GAME_DEV" frame
-		attr_dev "$GAME_DEV" state
-		state=$OUT
-		steps=$((steps + 1))
-
-		[ "$state" != "over" ] || break
-	done
-
-	assert_eq "$state" "over" "the snake dies against the top wall"
-
-	attr_dev "$GAME_DEV" high_score
-	assert_int_in "$OUT" 0 $((GAME_W * GAME_H)) "the high score is kept"
-
-	attr_dev "$GAME_DEV" reset 1
-	attr_dev "$GAME_DEV" state
-	assert_eq "$OUT" "running" "a reset revives the game"
-
-	attr_dev "$GAME_DEV" score
-	assert_eq "$OUT" "0" "a reset clears the score"
 }
 
 # Check a capture of STREAM_SAMPLES be:u12/16 samples; $2 names the client
@@ -543,7 +443,6 @@ else
 fi
 
 wait_board
-read_geometry
 
 echo
 echo "== running the utility checks against $URI =="

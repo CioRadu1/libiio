@@ -7,7 +7,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <no_os_util.h>
-#include "common_api.h"
+#include "maxim_adc.h"
 
 /* The part's own ADC, e.g. "max32690-adc": platform.cmake sets it per TARGET. */
 #ifndef IIO_ADC_NAME
@@ -43,6 +43,7 @@ static const char *const maxim_adc_channels[IIO_ADC_NUM_CHANNELS] = {
 
 #if MAXIM_ADC_REVB
 
+/* Init the rev B ADC: internal 1.25 V reference, software trigger. */
 static int maxim_adc_init(void)
 {
 	mxc_adc_req_t adc_cfg = {
@@ -57,6 +58,7 @@ static int maxim_adc_init(void)
 	return MXC_ADC_Init(&adc_cfg);
 }
 
+/* One software-triggered conversion on a channel, polled until done. */
 static int maxim_adc_read_raw(unsigned int channel, int *value)
 {
 	mxc_adc_slot_req_t slot_req = { 0 };
@@ -125,6 +127,7 @@ out:
 	return ret;
 }
 
+/* Switch the ADC between its internal 1.25 V and the external reference. */
 static int maxim_adc_set_reference(unsigned int channel, unsigned int reference)
 {
 	mxc_adc_refsel_t ref;
@@ -151,6 +154,7 @@ static int maxim_adc_set_reference(unsigned int channel, unsigned int reference)
 
 #else /* revA */
 
+/* Init the rev A ADC. */
 static int maxim_adc_init(void)
 {
 	int ret;
@@ -164,6 +168,7 @@ static int maxim_adc_init(void)
 	return 0;
 }
 
+/* One conversion on a channel; the rev A call blocks until done. */
 static int maxim_adc_read_raw(unsigned int channel, int *value)
 {
 	int raw;

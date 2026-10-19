@@ -58,16 +58,19 @@ static struct mx_usb_req tx_reqs[IIO_USB_MAX_PIPES];
 static unsigned int num_pipes;
 static volatile uint16_t usb_mps = MX_USB_MAX_PACKET_FS;
 
+/* IN (board to host) endpoint of pipe N: 1, 3, 5... */
 static uint8_t pipe_ep_in(unsigned int pipe)
 {
 	return (uint8_t)(2 * pipe + 1);
 }
 
+/* OUT (host to board) endpoint of pipe N: 2, 4, 6... */
 static uint8_t pipe_ep_out(unsigned int pipe)
 {
 	return (uint8_t)(2 * pipe + 2);
 }
 
+/* Mask the USB interrupt around MSDK request calls; returns the old state. */
 static bool usb_irq_lock(void)
 {
 	/* NVIC->ISER, not NVIC_GetEnableIRQ(): CMSIS 4 headers lack it. */
@@ -79,12 +82,14 @@ static bool usb_irq_lock(void)
 	return enabled;
 }
 
+/* Restore the USB interrupt state saved by usb_irq_lock(). */
 static void usb_irq_unlock(bool enabled)
 {
 	if (enabled)
 		NVIC_EnableIRQ(USB_IRQn);
 }
 
+/* Build a USB string descriptor (UTF-16LE) from an ASCII string. */
 static void desc_put_str(uint8_t *dst, const char *src)
 {
 	size_t i, len = src ? strlen(src) : 0;
@@ -101,6 +106,10 @@ static void desc_put_str(uint8_t *dst, const char *src)
 	}
 }
 
+/*
+ * Configuration descriptor: one vendor interface with a bulk IN/OUT pair
+ * per pipe, the layout libiio's USB backend expects.
+ */
 static void desc_build_config(uint8_t *dst, unsigned int pipes, uint16_t mps)
 {
 	unsigned int total = MX_USB_DESC_CFG_LEN + MX_USB_DESC_IFACE_LEN +
@@ -150,6 +159,7 @@ static void desc_build_config(uint8_t *dst, unsigned int pipes, uint16_t mps)
 	}
 }
 
+/* Build every descriptor (device, qualifier, FS/HS config, strings). */
 static void desc_build(const struct iio_usb_dev_info *info)
 {
 	uint8_t *d = desc_dev;
@@ -194,6 +204,7 @@ static void desc_build(const struct iio_usb_dev_info *info)
 	desc_put_str(str_iface, info->interface_name);
 }
 
+/* MSDK completion of an OUT read, passed on to iio_usb_on_rx(). */
 static void mx_usb_rx_cb(void *cbdata)
 {
 	struct mx_usb_req *r = (struct mx_usb_req *)cbdata;
@@ -202,6 +213,7 @@ static void mx_usb_rx_cb(void *cbdata)
 		      r->req.error_code ? -EIO : 0);
 }
 
+/* MSDK completion of an IN write, passed on to iio_usb_on_tx(). */
 static void mx_usb_tx_cb(void *cbdata)
 {
 	struct mx_usb_req *r = (struct mx_usb_req *)cbdata;
@@ -210,6 +222,7 @@ static void mx_usb_tx_cb(void *cbdata)
 		      r->req.error_code ? -EIO : 0);
 }
 
+/* Queue a read on the pipe's OUT endpoint; it completes in mx_usb_rx_cb(). */
 static int mx_usb_submit_rx(unsigned int pipe, void *buf, uint32_t len)
 {
 	struct mx_usb_req *r = &rx_reqs[pipe];
@@ -233,6 +246,7 @@ static int mx_usb_submit_rx(unsigned int pipe, void *buf, uint32_t len)
 	return ret ? -EIO : 0;
 }
 
+/* Queue a write on the pipe's IN endpoint; it completes in mx_usb_tx_cb(). */
 static int mx_usb_submit_tx(unsigned int pipe, const void *buf, uint32_t len)
 {
 	struct mx_usb_req *r = &tx_reqs[pipe];
@@ -256,6 +270,7 @@ static int mx_usb_submit_tx(unsigned int pipe, const void *buf, uint32_t len)
 	return ret ? -EIO : 0;
 }
 
+/* Drop the queued requests on both endpoints of a pipe. */
 static void mx_usb_cancel(unsigned int pipe)
 {
 	MXC_USB_Req_t *r;
@@ -274,6 +289,7 @@ static void mx_usb_cancel(unsigned int pipe)
 	usb_irq_unlock(locked);
 }
 
+/* Discard packets still sitting in the pipe's endpoint FIFOs. */
 static void mx_usb_flush(unsigned int pipe)
 {
 	bool locked = usb_irq_lock();
@@ -292,11 +308,13 @@ static void mx_usb_flush(unsigned int pipe)
 	usb_irq_unlock(locked);
 }
 
+/* Bulk packet size for the speed the host negotiated. */
 static uint16_t mx_usb_max_packet(void)
 {
 	return usb_mps;
 }
 
+/* After a bus reset, pick the FS or HS packet size and config descriptor. */
 static void mx_usb_select_speed(void)
 {
 	if (MXC_USB_GetStatus() & MAXUSB_STATUS_HIGH_SPEED) {
@@ -310,6 +328,7 @@ static void mx_usb_select_speed(void)
 	}
 }
 
+/* Cable and bus events: connect on VBUS; disconnect and reset go to iiod. */
 static int mx_usb_event_cb(maxusb_event_t evt, void *data)
 {
 	switch (evt) {
@@ -351,6 +370,7 @@ static int mx_usb_event_cb(maxusb_event_t evt, void *data)
 	return 0;
 }
 
+/* Host picked the configuration: set up the endpoints, report connected. */
 static int mx_usb_setconfig_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 {
 	unsigned int i;
@@ -375,6 +395,7 @@ static int mx_usb_setconfig_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 	return -1;
 }
 
+/* Only remote wakeup is accepted; any other feature is stalled. */
 static int mx_usb_setfeature_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 {
 	if (sud->wValue == FEAT_REMOTE_WAKE)
@@ -383,6 +404,7 @@ static int mx_usb_setfeature_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 	return -1;
 }
 
+/* Only remote wakeup is accepted; any other feature is stalled. */
 static int mx_usb_clrfeature_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 {
 	if (sud->wValue == FEAT_REMOTE_WAKE)
@@ -391,6 +413,7 @@ static int mx_usb_clrfeature_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 	return -1;
 }
 
+/* Vendor requests from libiio's USB backend: reset/open/close pipes. */
 static int mx_usb_vendor_req_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 {
 	switch (sud->bRequest) {
@@ -415,16 +438,19 @@ static int mx_usb_vendor_req_cb(MXC_USB_SetupPkt *sud, void *cbdata)
 	}
 }
 
+/* USB interrupt vector: lets the MSDK dispatch events and transfers. */
 static void mx_usb_irq_handler(void)
 {
 	MXC_USB_EventHandler();
 }
 
+/* Microsecond delay hook the MSDK USB stack needs. */
 static void mx_usb_delay_us(unsigned int usec)
 {
 	no_os_udelay((uint32_t)usec);
 }
 
+/* Bring up the MAX32690 USB device with the IIO descriptors and callbacks. */
 static int mx_usb_init(const struct iio_usb_dev_info *info)
 {
 	maxusb_cfg_options_t opts;
@@ -480,6 +506,7 @@ static int mx_usb_init(const struct iio_usb_dev_info *info)
 	return 0;
 }
 
+/* Disconnect from the host and shut the USB block down. */
 static void mx_usb_remove(void)
 {
 	NVIC_DisableIRQ(USB_IRQn);

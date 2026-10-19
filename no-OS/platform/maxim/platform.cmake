@@ -8,7 +8,7 @@
 #   IIOD_PLATFORM_SRCS      MSDK sources the no-os target list leaves out
 #   IIOD_PLATFORM_INCLUDES  their private header dirs
 #   IIOD_PLATFORM_DEFS      part-specific defines (ADC wiring)
-#   IIOD_PLATFORM_ADC       default ADC HAL under drivers/adc/
+#   IIOD_PLATFORM_ADC       default ADC HAL: adc/<name>.c here, else drivers/adc/
 #
 # Read after add_subdirectory(no-OS), so the no-os target and MAXIM_LIBRARIES
 # (set by the no-OS toolchain file) are both known.
@@ -46,17 +46,17 @@ endfunction()
 set(IIOD_STACK_SIZE 0x10000 CACHE STRING "Main stack size (bytes)")
 target_compile_definitions(no-os PRIVATE __STACK_SIZE=${IIOD_STACK_SIZE})
 
-# ---------- ADC: parts the common_api HAL has been brought up on ----------
+# ---------- ADC: parts the maxim_adc HAL has been brought up on ----------
 # The IIO device takes the part's name, e.g. max32690-adc.
 list(APPEND IIOD_PLATFORM_DEFS IIO_ADC_NAME="${TARGET}-adc")
 if(TARGET_NUM STREQUAL "32690")
   _maxim_add_msdk(ADC adc_me18 adc_revb)
   list(APPEND IIOD_PLATFORM_DEFS IIO_ADC_CLOCK=MXC_ADC_CLK_IBRO)
-  set(IIOD_PLATFORM_ADC common_api)
+  set(IIOD_PLATFORM_ADC maxim_adc)
 elseif(TARGET_NUM STREQUAL "32655")
   _maxim_add_msdk(ADC adc_me17 adc_reva)
   list(APPEND IIOD_PLATFORM_DEFS IIO_ADC_REF_VOLTAGE_MV=1220)
-  set(IIOD_PLATFORM_ADC common_api)
+  set(IIOD_PLATFORM_ADC maxim_adc)
 endif()
 
 # ---------- USB: only the parts with the USB-HS core ----------
@@ -67,7 +67,7 @@ if(IIOD_TRANSPORT STREQUAL "usb")
       "(no drivers/platform/maxim/${TARGET}/maxim_usb_uart.c). "
       "Pick the uart transport for this board.")
   endif()
-  list(APPEND IIOD_PLATFORM_SRCS "${CMAKE_CURRENT_LIST_DIR}/iio_usb_backend.c")
+  list(APPEND IIOD_PLATFORM_SRCS "${CMAKE_CURRENT_LIST_DIR}/iio_usb_maxim.c")
 endif()
 
 # ---------- Network: the ADIN1110 is wired as on the AD-APARD32690-SL ----------

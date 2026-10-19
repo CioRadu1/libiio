@@ -86,16 +86,19 @@ static uint32_t session_seq;
 static struct no_os_timer_desc *tick_timer;
 static struct no_os_irq_ctrl_desc *tick_irq;
 
+/* Bytes waiting in a pipe's receive ring. */
 static uint32_t ring_used(const struct iio_usb_pipe *p)
 {
 	return p->rx_head - p->rx_tail;
 }
 
+/* Space left in a pipe's receive ring. */
 static uint32_t ring_free(const struct iio_usb_pipe *p)
 {
 	return IIO_USB_RX_RING_SIZE - ring_used(p);
 }
 
+/* Copy a received USB packet into the ring (runs from the USB interrupt). */
 static void ring_push(struct iio_usb_pipe *p, const uint8_t *src, uint32_t len)
 {
 	uint32_t off = p->rx_head & IIO_USB_RX_RING_MASK;
@@ -111,6 +114,9 @@ static void ring_push(struct iio_usb_pipe *p, const uint8_t *src, uint32_t len)
 	p->rx_head += len;
 }
 
+/*
+ * Take up to len bytes out of the ring for the interpreter; returns how many.
+ */
 static uint32_t ring_pop(struct iio_usb_pipe *p, uint8_t *dst, uint32_t len)
 {
 	uint32_t used = ring_used(p);
@@ -135,6 +141,7 @@ static uint32_t ring_pop(struct iio_usb_pipe *p, uint8_t *dst, uint32_t len)
 	return len;
 }
 
+/* Abort the queued USB transfers of one pipe. */
 static void pipe_cancel(unsigned int index)
 {
 	struct iio_usb_pipe *p = &pipes[index];
@@ -145,6 +152,7 @@ static void pipe_cancel(unsigned int index)
 	p->tx_done = true;
 }
 
+/* Close every pipe, on a bus reset or when the host resets the pipes. */
 static void pipes_close_all(void)
 {
 	unsigned int i;
@@ -155,6 +163,7 @@ static void pipes_close_all(void)
 	}
 }
 
+/* Platform callback, an OUT packet arrived: store it or keep the error. */
 void iio_usb_on_rx(unsigned int pipe, uint32_t len, int status)
 {
 	struct iio_usb_pipe *p = &pipes[pipe];
@@ -167,6 +176,7 @@ void iio_usb_on_rx(unsigned int pipe, uint32_t len, int status)
 	p->rx_pending = false;
 }
 
+/* Platform callback, an IN transfer finished: unblocks iiod_usb_write(). */
 void iio_usb_on_tx(unsigned int pipe, uint32_t len, int status)
 {
 	struct iio_usb_pipe *p = &pipes[pipe];
@@ -176,6 +186,7 @@ void iio_usb_on_tx(unsigned int pipe, uint32_t len, int status)
 	p->tx_done = true;
 }
 
+/* Platform callback for configure/disconnect/reset: is the host usable? */
 void iio_usb_on_event(unsigned int event)
 {
 	switch (event) {
@@ -194,6 +205,7 @@ void iio_usb_on_event(unsigned int event)
 	}
 }
 
+/* libiio's vendor requests that open, close or reset the IIO pipes. */
 void iio_usb_on_ctrl(unsigned int req, unsigned int pipe)
 {
 	struct iio_usb_pipe *p;
@@ -230,6 +242,7 @@ void iio_usb_on_ctrl(unsigned int req, unsigned int pipe)
 	}
 }
 
+/* Queue the next OUT read on a pipe if it is open and its ring has room. */
 static void pipe_submit_rx(unsigned int index)
 {
 	struct iio_usb_pipe *p = &pipes[index];
@@ -250,6 +263,7 @@ static void pipe_submit_rx(unsigned int index)
 	}
 }
 
+/* Timer interrupt: advances the timeout clock and keeps every pipe reading. */
 static void usb_tick_cb(void *ctx)
 {
 	unsigned int i;
@@ -263,11 +277,13 @@ static void usb_tick_cb(void *ctx)
 		pipe_submit_rx(i);
 }
 
+/* True while the host session that started the interpreter owns pipe 0. */
 static bool session_alive(void)
 {
 	return configured && pipes[0].open && pipes[0].open_seq == session_seq;
 }
 
+/* True if the session is alive and this pipe is open. */
 static bool pipe_usable(const struct iio_usb_pipe *p)
 {
 	return session_alive() && p->open;
@@ -319,6 +335,10 @@ static int pipe_wait_any(unsigned int *index)
 	return -ENODEV;
 }
 
+/*
+ * Interpreter read: take the pipe that has a new command, then read the rest
+ * of that command from the same pipe, with a timeout.
+ */
 static ssize_t iiod_usb_read(struct iiod_pdata *pdata, void *buf, size_t size)
 {
 	uint8_t *dst = (uint8_t *)buf;
@@ -374,6 +394,10 @@ again:
 	return (ssize_t)size;
 }
 
+/*
+ * Interpreter write: send the reply on the command's pipe; give up early if
+ * the host abandoned that pipe.
+ */
 static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 			      size_t size)
 {
@@ -461,6 +485,7 @@ static void session_close(void)
 	}
 }
 
+/* Start the periodic tick timer that drives timeouts and RX re-arming. */
 static int usb_tick_init(void)
 {
 	struct no_os_timer_init_param tick_tip = {
@@ -517,6 +542,10 @@ remove_timer:
 	return ret;
 }
 
+/*
+ * USB server: bring up the device, build the XML, then run one interpreter
+ * per host session.
+ */
 int iiod_usb_run(void)
 {
 	static const struct iio_usb_dev_info dev_info = {
@@ -601,6 +630,7 @@ remove_usb:
 	return ret;
 }
 
+/* Entry point of the usb build: uart console for logs, IIOD over USB. */
 int noos_iiod_run(void)
 {
 	struct no_os_uart_desc *console;
