@@ -8,8 +8,10 @@
 #include <iio-private.h>
 #include <errno.h>
 #include <no_os_print_log.h>
+#include <no_os_uart.h>
 #include <iio_device.h>
-#include <iio_board.h>
+#include "iio_noos_driver_desc.h"
+#include <noos_iiod.h>
 
 #define NOOS_BACKEND_VERSION "no-OS 1.0 " __DATE__ " " __TIME__
 
@@ -73,6 +75,11 @@ static int noos_enable_buffer(struct iio_buffer_pdata *pdata,
 		if (ret)
 			return ret;
 	}
+
+	/* A table device paced by its trigger: the next stream restarts it. */
+	if (info && !enable && pdata->enabled && info->read_scan &&
+	    !info->wait_scan && info->trigger)
+		noos_trigger_stop(info->trigger);
 
 	pdata->enabled = enable;
 
@@ -212,48 +219,60 @@ static int noos_dequeue_block(struct iio_block_pdata *pdata, bool nonblock)
  */
 int noos_iio_register_device(const struct noos_iio_device_info *info)
 {
+	int ret;
+
 	if (!info)
 		return -EINVAL;
 
 	if (noos_iio_device_count >= NOOS_IIO_MAX_DEVICES)
 		return -ENOMEM;
 
-	noos_iio_devices[noos_iio_device_count++] = *info;
+	/* A table-driven device gets its callbacks made from its tables here. */
+	noos_iio_devices[noos_iio_device_count] = *info;
+	ret = noos_iio_table_install(&noos_iio_devices[noos_iio_device_count]);
+	if (ret)
+		return ret;
+
+	noos_iio_device_count++;
 	return 0;
 }
 
 /*
- * Init and register every device of the board file, once. A device that
- * fails is logged and left out; the rest are still served.
+ * Point the logs at the project's console, then init and register every
+ * row of its device table. A device that fails is logged and left out; the
+ * rest are still served.
  */
-static void noos_board_register(void)
+void noos_iiod_register(const struct noos_iiod_param *param)
 {
-	static bool done;
+	static struct no_os_uart_desc *console;
 	struct noos_iio_device_info info;
 	unsigned int i;
 	int ret;
 
-	if (done)
-		return;
-	done = true;
+	/* First, so the device inits below can already log. */
+	if (param->console && !console) {
+		ret = no_os_uart_init(&console, param->console);
+		if (!ret)
+			no_os_uart_stdio(console);
+	}
 
-	for (i = 0; i < noos_board_device_count; i++) {
-		const struct noos_board_device *bd = &noos_board_devices[i];
+	for (i = 0; i < param->nb_devices; i++) {
+		const struct noos_iiod_device *d = &param->devices[i];
 
-		if (bd->init) {
-			ret = bd->init();
+		if (d->init) {
+			ret = d->init(d->param);
 			if (ret) {
-				pr_err("board device %u: init failed: %d\n", i, ret);
+				pr_err("device %u: init failed: %d\n", i, ret);
 				continue;
 			}
 		}
 
 		info = (struct noos_iio_device_info) { 0 };
-		ret = bd->get_info(&info);
+		ret = d->get_info(&info);
 		if (!ret)
 			ret = noos_iio_register_device(&info);
 		if (ret)
-			pr_err("board device %u: not registered: %d\n", i, ret);
+			pr_err("device %u: not registered: %d\n", i, ret);
 	}
 }
 
@@ -285,7 +304,7 @@ noos_write_attr(const struct iio_attr *attr, const char *src, size_t len)
 	return info->write_attr(info->dev, iio_dev, attr, src, len);
 }
 
-/* Report the trigger fixed at build time (info->trigger), e.g. timer0. */
+/* Report the device's current trigger (info->trigger), e.g. timer0. */
 static const struct iio_device *
 noos_get_trigger(const struct iio_device *dev)
 {
@@ -309,10 +328,38 @@ noos_get_trigger(const struct iio_device *dev)
  * the device already has is accepted and anything else is refused. That lets
  * a client name it (iio_rwdev -t) without the port pretending to re-route it.
  */
+/*
+ * The host picks a device's trigger (iio_rwdev -t): any trigger device, or
+ * none, when the driver can change it; otherwise only the one it has.
+ */
 static int noos_set_trigger(const struct iio_device *dev,
 			    const struct iio_device *trigger)
 {
-	const struct iio_device *fixed = noos_get_trigger(dev);
+	struct noos_iio_device_info *info =
+		(struct noos_iio_device_info *)iio_device_get_pdata(dev);
+	const struct iio_device *fixed;
+	const char *name = NULL;
+	int ret;
+
+	/* A table device paced by the port takes any trigger; see read_scan. */
+	if (info && (info->set_trigger || (info->read_scan && !info->wait_scan))) {
+		if (trigger) {
+			if (!iio_device_is_trigger(trigger))
+				return -EINVAL;
+			name = iio_device_get_name(trigger);
+		}
+
+		if (info->set_trigger) {
+			ret = info->set_trigger(info->dev, name);
+			if (ret)
+				return ret;
+		}
+
+		info->trigger = name;
+		return 0;
+	}
+
+	fixed = noos_get_trigger(dev);
 
 	if (iio_err(fixed))
 		return trigger ? iio_err(fixed) : 0;
@@ -358,8 +405,6 @@ noos_create_context(const struct iio_context_params *params, const char *args)
 	unsigned int i, nb_devices = 0, nb_triggers = 0;
 	char id[32];
 	int ret;
-
-	noos_board_register();
 
 	ctx = iio_context_create_from_backend(params, &iio_external_backend,
 					      NOOS_BACKEND_VERSION, 1, 0, 0, "v1.0");

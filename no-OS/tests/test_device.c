@@ -71,29 +71,16 @@ TEST_FUNCTION(device_channels_registered)
 	iio_context_destroy(ctx);
 }
 
+/* An ADC's standard device attributes are its shared ones; the sample's
+ * ADCs share none (the timer trigger owns the sampling frequency). */
 TEST_FUNCTION(device_attrs)
 {
 	struct iio_context *ctx = test_ctx_require();
 	struct iio_device *dev = test_dev_require(ctx);
-	const struct iio_attr *attr;
 
 	TEST_OUT("device attrs_count = %u", iio_device_get_attrs_count(dev));
-	TEST_LONG_EQ(iio_device_get_attrs_count(dev), 1,
-		       "device exposes one device-level attribute");
-
-	attr = iio_device_get_attr(dev, 0);
-	TEST_OUT("attr 0 name = \"%s\"",
-		 attr ? iio_attr_get_name(attr) : "(null)");
-	TEST_IN("expecting \"internal_ref_voltage\"");
-	TEST_ASSERT_PTR_NOT_NULL(attr, "device attribute 0 is reachable");
-	if (attr)
-		TEST_STR_EQ(iio_attr_get_name(attr),
-				   "internal_ref_voltage",
-				   "device attribute name");
-
-	TEST_ASSERT_PTR_NOT_NULL(iio_device_find_attr(dev,
-						      "internal_ref_voltage"),
-				 "find_attr locates internal_ref_voltage");
+	TEST_LONG_EQ(iio_device_get_attrs_count(dev), 0,
+		       "device exposes no device-level attribute");
 	TEST_ASSERT_PTR_NULL(iio_device_find_attr(dev, "not_an_attr"),
 			     "find_attr rejects an unknown name");
 

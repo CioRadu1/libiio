@@ -12,7 +12,7 @@
 #include <no_os_timer.h>
 #include <no_os_irq.h>
 #include <tinyiiod/tinyiiod.h>
-#include "parameters.h"
+#include "noos_iiod.h"
 #include "iio_device.h"
 #include "iio_usb_hal.h"
 
@@ -20,35 +20,15 @@
 #define IIO_USB_NUM_PIPES	2
 #endif
 
-#ifndef NO_OS_USB_VENDOR_ID
-#define NO_OS_USB_VENDOR_ID	0x0456
-#endif
-
-#ifndef NO_OS_USB_PRODUCT_ID
-#define NO_OS_USB_PRODUCT_ID	0xB673
-#endif
-
-#ifndef NO_OS_USB_MANUFACTURER
-#define NO_OS_USB_MANUFACTURER	"Analog Devices"
-#endif
-
-#ifndef NO_OS_USB_PRODUCT
-#define NO_OS_USB_PRODUCT	"IIO"
-#endif
-
-#ifndef NO_OS_USB_SERIAL
-#define NO_OS_USB_SERIAL	"000000001"
-#endif
-
 #define IIO_USB_IFACE_NAME	"IIO"
 
 #define IIO_USB_RX_RING_SIZE	2048
 #define IIO_USB_RX_RING_MASK	(IIO_USB_RX_RING_SIZE - 1)
 
-#define USB_TICK_HZ		(USB_TICK_TIMER_FREQ_HZ / USB_TICK_TIMER_TICKS)
-#define USB_IO_TIMEOUT_TICKS	(USB_TICK_HZ * 10)
+/* Timeouts in usb_ticks, from the project's tick rate (usb_tick_init()). */
+static uint32_t usb_io_timeout_ticks;	/* 10 s */
 /* How long a data pipe may hold a response back while pipe 0 has a command. */
-#define USB_STALL_TICKS		(USB_TICK_HZ / 5)
+static uint32_t usb_stall_ticks;	/* 200 ms */
 
 struct iio_usb_pipe {
 	volatile bool		open;
@@ -387,7 +367,7 @@ again:
 			continue;
 		}
 
-		if (usb_ticks - start >= USB_IO_TIMEOUT_TICKS)
+		if (usb_ticks - start >= usb_io_timeout_ticks)
 			return -ETIMEDOUT;
 	}
 
@@ -439,12 +419,12 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 			 * data pipe, and sends the teardown on pipe 0: serve
 			 * that instead of waiting out the full timeout. */
 			if (index && ring_used(&pipes[0]) &&
-			    usb_ticks - start >= USB_STALL_TICKS) {
+			    usb_ticks - start >= usb_stall_ticks) {
 				pipe_stall(index);
 				return -EPIPE;
 			}
 
-			if (usb_ticks - start >= USB_IO_TIMEOUT_TICKS) {
+			if (usb_ticks - start >= usb_io_timeout_ticks) {
 				pipe_cancel(index);
 				return -ETIMEDOUT;
 			}
@@ -485,48 +465,46 @@ static void session_close(void)
 	}
 }
 
-/* Start the periodic tick timer that drives timeouts and RX re-arming. */
-static int usb_tick_init(void)
+/* Start the project's tick timer, which drives timeouts and RX re-arming. */
+static int usb_tick_init(const struct noos_iiod_timer *tick)
 {
-	struct no_os_timer_init_param tick_tip = {
-		.id = USB_TICK_TIMER_ID,
-		.freq_hz = USB_TICK_TIMER_FREQ_HZ,
-		.ticks_count = USB_TICK_TIMER_TICKS,
-		.platform_ops = USB_TICK_TIMER_OPS,
-		.extra = USB_TICK_TIMER_EXTRA,
-	};
-	struct no_os_irq_init_param tick_irq_ip = {
-		.irq_ctrl_id = 0,
-		.platform_ops = USB_TICK_IRQ_OPS,
-		.extra = NULL,
-	};
 	struct no_os_callback_desc tick_cb = {
 		.callback = usb_tick_cb,
 		.ctx = NULL,
 		.event = NO_OS_EVT_TIM_ELAPSED,
 		.peripheral = NO_OS_TIM_IRQ,
-		.handle = USB_TICK_IRQ_HANDLE,
+		.handle = tick->irq_handle,
 	};
+	uint32_t tick_hz;
 	int ret;
 
-	ret = no_os_timer_init(&tick_timer, &tick_tip);
+	if (!tick->timer || !tick->irq || !tick->timer->ticks_count)
+		return -EINVAL;
+
+	tick_hz = tick->timer->freq_hz / tick->timer->ticks_count;
+	if (tick_hz < 5)
+		return -EINVAL;
+	usb_io_timeout_ticks = tick_hz * 10;
+	usb_stall_ticks = tick_hz / 5;
+
+	ret = no_os_timer_init(&tick_timer, tick->timer);
 	if (ret)
 		return ret;
 
-	ret = no_os_irq_ctrl_init(&tick_irq, &tick_irq_ip);
+	ret = no_os_irq_ctrl_init(&tick_irq, tick->irq);
 	if (ret)
 		goto remove_timer;
 
-	ret = no_os_irq_register_callback(tick_irq, USB_TICK_IRQ_ID, &tick_cb);
+	ret = no_os_irq_register_callback(tick_irq, tick->irq_id, &tick_cb);
 	if (ret)
 		goto remove_irq;
 
-	ret = no_os_irq_set_priority(tick_irq, USB_TICK_IRQ_ID,
-				     USB_TICK_IRQ_PRIORITY);
+	ret = no_os_irq_set_priority(tick_irq, tick->irq_id,
+				     tick->irq_priority);
 	if (ret)
 		goto remove_irq;
 
-	ret = no_os_irq_enable(tick_irq, USB_TICK_IRQ_ID);
+	ret = no_os_irq_enable(tick_irq, tick->irq_id);
 	if (ret)
 		goto remove_irq;
 
@@ -546,15 +524,15 @@ remove_timer:
  * USB server: bring up the device, build the XML, then run one interpreter
  * per host session.
  */
-int iiod_usb_run(void)
+int iiod_usb_run(const struct noos_iiod_usb *usb)
 {
-	static const struct iio_usb_dev_info dev_info = {
-		.vendor_id	= NO_OS_USB_VENDOR_ID,
-		.product_id	= NO_OS_USB_PRODUCT_ID,
+	const struct iio_usb_dev_info dev_info = {
+		.vendor_id	= usb->vendor_id,
+		.product_id	= usb->product_id,
 		.release	= 0x0100,
-		.manufacturer	= NO_OS_USB_MANUFACTURER,
-		.product	= NO_OS_USB_PRODUCT,
-		.serial		= NO_OS_USB_SERIAL,
+		.manufacturer	= usb->manufacturer,
+		.product	= usb->product,
+		.serial		= usb->serial,
 		.interface_name	= IIO_USB_IFACE_NAME,
 		.num_pipes	= IIO_USB_NUM_PIPES,
 	};
@@ -570,7 +548,7 @@ int iiod_usb_run(void)
 	if (ret)
 		return ret;
 
-	ret = usb_tick_init();
+	ret = usb_tick_init(&usb->tick);
 	if (ret) {
 		pr_err("USB tick timer init failed: %d\n", ret);
 		goto remove_usb;
@@ -630,30 +608,13 @@ remove_usb:
 	return ret;
 }
 
-/* Entry point of the usb build: uart console for logs, IIOD over USB. */
-int noos_iiod_run(void)
+/* Entry point of the usb build: register the project's devices, IIOD over USB. */
+int noos_iiod_run(const struct noos_iiod_param *param)
 {
-	struct no_os_uart_desc *console;
-	struct no_os_uart_init_param console_ip = {
-		.device_id = UART_DEVICE_ID,
-		.baud_rate = UART_BAUDRATE,
-		.size = NO_OS_UART_CS_8,
-		.parity = NO_OS_UART_PAR_NO,
-		.stop = NO_OS_UART_STOP_1_BIT,
-		.platform_ops = UART_OPS,
-		.extra = UART_EXTRA,
-	};
-	int ret;
+	if (!param || !param->usb)
+		return -EINVAL;
 
-	ret = no_os_uart_init(&console, &console_ip);
-	if (ret)
-		return ret;
+	noos_iiod_register(param);
 
-	no_os_uart_stdio(console);
-
-	ret = iiod_usb_run();
-
-	no_os_uart_remove(console);
-
-	return ret;
+	return iiod_usb_run(param->usb);
 }

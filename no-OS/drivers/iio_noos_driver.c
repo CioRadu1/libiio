@@ -139,23 +139,41 @@ static int drv_attr_rw(const struct noos_iio_driver *a,
 	}
 }
 
-static int drv_read_attr(void *dev, const struct iio_device *iio_dev,
-			 const struct iio_attr *attr, char *dst, size_t len)
+/*
+ * After a show into @dst: show returns the text length, the responder wants
+ * it with the NUL.
+ */
+static int attr_read_done(char *dst, size_t len, int ret)
 {
-	int ret;
-
-	if (!len)
-		return -EINVAL;
-
-	ret = drv_attr_rw(dev, attr, dst, len, false);
 	if (ret < 0)
 		return ret;
 	if ((size_t)ret >= len)
 		return -EINVAL;
 
-	/* show returns the text length; the responder wants it with the NUL. */
 	dst[ret] = '\0';
 	return (int)strlen(dst) + 1;
+}
+
+/* Before a store: it parses a writable, NUL-terminated string. */
+static int attr_write_buf(char *buf, size_t size, const char *src,
+			  size_t *len)
+{
+	*len = strnlen(src, *len);
+	if (*len >= size)
+		return -EINVAL;
+
+	memcpy(buf, src, *len);
+	buf[*len] = '\0';
+	return 0;
+}
+
+static int drv_read_attr(void *dev, const struct iio_device *iio_dev,
+			 const struct iio_attr *attr, char *dst, size_t len)
+{
+	if (!len)
+		return -EINVAL;
+
+	return attr_read_done(dst, len, drv_attr_rw(dev, attr, dst, len, false));
 }
 
 static int drv_write_attr(void *dev, const struct iio_device *iio_dev,
@@ -165,14 +183,9 @@ static int drv_write_attr(void *dev, const struct iio_device *iio_dev,
 	char buf[DRV_ATTR_BUF_SIZE];
 	int ret;
 
-	/* store parses a writable, NUL-terminated string. */
-	len = strnlen(src, len);
-	if (len >= sizeof(buf))
-		return -EINVAL;
-	memcpy(buf, src, len);
-	buf[len] = '\0';
-
-	ret = drv_attr_rw(dev, attr, buf, len, true);
+	ret = attr_write_buf(buf, sizeof(buf), src, &len);
+	if (!ret)
+		ret = drv_attr_rw(dev, attr, buf, len, true);
 
 	return ret < 0 ? ret : (int)len;
 }
@@ -256,8 +269,24 @@ static int drv_enable_buffer(void *dev, bool enable)
 	if (enable || !a->enabled)
 		return 0;
 
+	/* As iio_adc.c: the next stream's first tick restarts its trigger. */
+	if (a->trigger)
+		noos_trigger_stop(a->trigger);
+
 	a->enabled = false;
 	return noos_desc_enable(a, a->mask, false);
+}
+
+/* The host chose another trigger (or none): pace the next capture with it. */
+static int drv_set_trigger(void *dev, const char *trigger)
+{
+	struct noos_iio_driver *a = dev;
+
+	if (a->enabled)
+		return -EBUSY;
+
+	a->trigger = trigger;
+	return 0;
 }
 
 static int drv_reg_read(void *dev, uint32_t reg, uint32_t *val)
@@ -268,6 +297,67 @@ static int drv_reg_read(void *dev, uint32_t reg, uint32_t *val)
 static int drv_reg_write(void *dev, uint32_t reg, uint32_t val)
 {
 	return noos_desc_reg_write(dev, reg, val);
+}
+
+/* Trigger devices: their descriptor's attributes, e.g. trigger_now. */
+static int trig_add_attrs(void *dev, struct iio_device *iio_dev)
+{
+	const struct noos_iio_trigger *t = dev;
+	const char *name;
+	unsigned int k;
+	int ret;
+
+	for (k = 0; (name = noos_desc_trig_attr_name(t, k)); k++) {
+		ret = iio_device_add_attr(iio_dev, name, IIO_ATTR_TYPE_DEVICE);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int trig_read_attr(void *dev, const struct iio_device *iio_dev,
+			  const struct iio_attr *attr, char *dst, size_t len)
+{
+	if (!len)
+		return -EINVAL;
+
+	return attr_read_done(dst, len,
+			      noos_desc_trig_attr_rw(dev, iio_attr_get_name(attr),
+						     dst, len, false));
+}
+
+static int trig_write_attr(void *dev, const struct iio_device *iio_dev,
+			   const struct iio_attr *attr, const char *src,
+			   size_t len)
+{
+	char buf[DRV_ATTR_BUF_SIZE];
+	int ret;
+
+	ret = attr_write_buf(buf, sizeof(buf), src, &len);
+	if (!ret)
+		ret = noos_desc_trig_attr_rw(dev, iio_attr_get_name(attr), buf,
+					     len, true);
+
+	return ret < 0 ? ret : (int)len;
+}
+
+int noos_iio_trigger_get_device_info(struct noos_iio_trigger *trig,
+				     struct noos_iio_device_info *info)
+{
+	if (!trig || !info)
+		return -EINVAL;
+
+	*info = (struct noos_iio_device_info) {
+		.name = trig->name,
+		.dev = trig,
+		.is_trigger = true,
+		.add_channels = trig_add_attrs,
+		.read_attr = trig_read_attr,
+		.write_attr = trig_write_attr,
+	};
+
+	return 0;
 }
 
 int noos_iio_driver_get_device_info(struct noos_iio_driver *drv,
@@ -295,6 +385,8 @@ int noos_iio_driver_get_device_info(struct noos_iio_driver *drv,
 		.read_samples = output ? NULL : drv_read_samples,
 		.write_samples = output ? drv_write_samples : NULL,
 		.enable_buffer = drv_enable_buffer,
+		.trigger = drv->trigger,
+		.set_trigger = drv_set_trigger,
 		.reg_read = noos_desc_has_reg(drv) ? drv_reg_read : NULL,
 		.reg_write = noos_desc_has_reg(drv) ? drv_reg_write : NULL,
 	};

@@ -20,7 +20,7 @@ struct noos_iio_device_info;
  *        is sampling.
  * @return 0 in case of success, negative error code otherwise.
  */
-int iio_trigger_timer_init(void);
+int iio_trigger_timer_init(const void *param);
 
 /**
  * @brief Wait for the next trigger tick, starting the timer on the first call.

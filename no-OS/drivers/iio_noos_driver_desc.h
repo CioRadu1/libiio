@@ -65,6 +65,21 @@ size_t noos_desc_bytes_per_scan(const struct noos_iio_driver *a,
 				 uint32_t mask);
 int noos_desc_enable(const struct noos_iio_driver *a, uint32_t mask,
 		      bool enable);
+/*
+ * Wait for the next tick of the trigger called @name: a no-OS trigger of
+ * the device table, else the timer0 trigger. For every device the port
+ * paces, served no-OS drivers and table-driven ones alike.
+ */
+int noos_trigger_wait(const char *name);
+/* Stop that trigger, when the buffer it paces is disabled. */
+void noos_trigger_stop(const char *name);
+
+/* A served no-OS trigger's attributes (its descriptor's), as for devices. */
+const char *noos_desc_trig_attr_name(const struct noos_iio_trigger *t,
+				     unsigned int k);
+int noos_desc_trig_attr_rw(const struct noos_iio_trigger *t, const char *name,
+			   char *buf, size_t len, bool write);
+
 /* One whole transfer of @bytes through the driver's submit (or read_dev). */
 int noos_desc_transfer(const struct noos_iio_driver *a, uint32_t mask,
 			void *data, size_t bytes, bool output);

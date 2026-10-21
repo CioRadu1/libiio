@@ -12,7 +12,7 @@
 #include <no_os_delay.h>
 #include <no_os_util.h>
 #include <tinyiiod/tinyiiod.h>
-#include "parameters.h"
+#include "noos_iiod.h"
 #include "iio_device.h"
 
 /* Size of a binary iiod_command header */
@@ -155,21 +155,24 @@ int iiod_uart_run(struct no_os_uart_desc *uart_desc)
 	return ret;
 }
 
-/* Entry point of the uart build: open the uart and run IIOD on it. */
-int noos_iiod_run(void)
+/*
+ * Entry point of the uart build: register the project's devices, open its
+ * uart and run IIOD on it.
+ */
+int noos_iiod_run(const struct noos_iiod_param *param)
 {
+	struct no_os_uart_init_param uart_ip;
 	struct no_os_uart_desc *uart_desc;
-	struct no_os_uart_init_param uart_ip = {
-		.device_id = UART_DEVICE_ID,
-		.baud_rate = UART_BAUDRATE,
-		.size = NO_OS_UART_CS_8,
-		.parity = NO_OS_UART_PAR_NO,
-		.stop = NO_OS_UART_STOP_1_BIT,
-		.asynchronous_rx = true,
-		.platform_ops = UART_OPS,
-		.extra = UART_EXTRA,
-	};
 	int ret;
+
+	if (!param || !param->uart)
+		return -EINVAL;
+
+	/* The read loop polls with -EAGAIN, which needs asynchronous rx. */
+	uart_ip = *param->uart;
+	uart_ip.asynchronous_rx = true;
+
+	noos_iiod_register(param);
 
 	ret = no_os_uart_init(&uart_desc, &uart_ip);
 	if (ret)

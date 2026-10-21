@@ -7,7 +7,6 @@
 #ifndef IIO_ADC_MAXIM_ADC_H
 #define IIO_ADC_MAXIM_ADC_H
 
-#include "iio_adc_hal.h"
 #include "adc.h"
 
 #define MAXIM_ADC_REVB MAX_ADC_SLOT_NUM
@@ -51,8 +50,8 @@
 #define IIO_ADC_NUM_CHANNELS 1
 #endif
 
-#if IIO_ADC_NUM_CHANNELS < 1 || IIO_ADC_NUM_CHANNELS > IIO_ADC_MAX_CHANNELS
-#error "IIO_ADC_NUM_CHANNELS out of range 1..IIO_ADC_MAX_CHANNELS"
+#if IIO_ADC_NUM_CHANNELS < 1 || IIO_ADC_NUM_CHANNELS > 8
+#error "IIO_ADC_NUM_CHANNELS out of range 1..8"
 #endif
 
 #if MAXIM_ADC_REVA && IIO_ADC_NUM_CHANNELS > MAXIM_ADC_AIN_COUNT

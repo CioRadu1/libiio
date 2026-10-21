@@ -15,7 +15,7 @@
 #include <tinyiiod/tinyiiod.h>
 #include "lwip_socket.h"
 #include "tcp_socket.h"
-#include "parameters.h"
+#include "noos_iiod.h"
 #include "iio_device.h"
 
 #define IIOD_PORT 30431
@@ -264,50 +264,28 @@ err_ctx:
 	return ret;
 }
 
-/* Entry point of the network build: console, lwIP bring-up, then the server. */
-int noos_iiod_run(void)
+/*
+ * Entry point of the network build: register the project's devices, bring
+ * up lwIP with its MAC/PHY settings, then serve.
+ */
+int noos_iiod_run(const struct noos_iiod_param *param)
 {
 	struct lwip_network_desc *lwip_desc;
-	struct no_os_uart_desc *console;
-	struct no_os_uart_init_param console_ip = {
-		.device_id = UART_DEVICE_ID,
-		.baud_rate = UART_BAUDRATE,
-		.size = NO_OS_UART_CS_8,
-		.parity = NO_OS_UART_PAR_NO,
-		.stop = NO_OS_UART_STOP_1_BIT,
-		.platform_ops = UART_OPS,
-		.extra = UART_EXTRA,
-	};
-	struct noos_net_config cfg = {
-		.lwip_ops = NET_LWIP_OPS,
-		.mac_param = NET_MAC_PARAM,
-		.mac_addr = NET_MAC_ADDR,
-	};
-	struct lwip_network_param lwip_param = {
-		.platform_ops = (const struct no_os_lwip_ops *)cfg.lwip_ops,
-		.mac_param = cfg.mac_param,
-	};
 	int ret;
 
-	ret = no_os_uart_init(&console, &console_ip);
-	if (ret)
-		return ret;
+	if (!param || !param->lwip)
+		return -EINVAL;
 
-	no_os_uart_stdio(console);
+	noos_iiod_register(param);
 
-	memcpy(lwip_param.hwaddr, cfg.mac_addr, 6);
-
-	ret = no_os_lwip_init(&lwip_desc, &lwip_param);
+	ret = no_os_lwip_init(&lwip_desc, param->lwip);
 	if (ret) {
 		pr_err("lwIP init failed: %d\n", ret);
-		goto err_console;
+		return ret;
 	}
 
 	ret = iiod_network_run(lwip_desc);
 	no_os_lwip_remove(lwip_desc);
-
-err_console:
-	no_os_uart_remove(console);
 
 	return ret;
 }

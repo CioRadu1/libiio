@@ -4,9 +4,23 @@
  * SPDX-License-Identifier: MIT
  */
 
+/*
+ * The MAX32 parts' own ADC (every part the MSDK's adc.h covers, revA or
+ * revB), as the standard ADC channels (iio_channels.h): voltage0 ...
+ * voltage<IIO_ADC_NUM_CHANNELS - 1>, each with raw and scale, one LSB in mV
+ * of the reference in use. On revB the reference can be switched
+ * (reference, reference_available): the internal one, and the external one
+ * when the board says its voltage (IIO_ADC_EXT_REF_VOLTAGE_MV).
+ */
+
 #include <errno.h>
 #include <stdint.h>
+
 #include <no_os_util.h>
+
+#include <iio_channels.h>
+#include <noos_iiod.h>
+
 #include "maxim_adc.h"
 
 /* The part's own ADC, e.g. "max32690-adc": platform.cmake sets it per TARGET. */
@@ -16,34 +30,8 @@
 
 #define ADC_POLL_TIMEOUT 1000000
 
-static const char *const maxim_adc_channels[IIO_ADC_NUM_CHANNELS] = {
-	"voltage0",
-#if IIO_ADC_NUM_CHANNELS > 1
-	"voltage1",
-#endif
-#if IIO_ADC_NUM_CHANNELS > 2
-	"voltage2",
-#endif
-#if IIO_ADC_NUM_CHANNELS > 3
-	"voltage3",
-#endif
-#if IIO_ADC_NUM_CHANNELS > 4
-	"voltage4",
-#endif
-#if IIO_ADC_NUM_CHANNELS > 5
-	"voltage5",
-#endif
-#if IIO_ADC_NUM_CHANNELS > 6
-	"voltage6",
-#endif
-#if IIO_ADC_NUM_CHANNELS > 7
-	"voltage7",
-#endif
-};
-
 #if MAXIM_ADC_REVB
 
-/* Init the rev B ADC: internal 1.25 V reference, software trigger. */
 static int maxim_adc_init(void)
 {
 	mxc_adc_req_t adc_cfg = {
@@ -58,8 +46,7 @@ static int maxim_adc_init(void)
 	return MXC_ADC_Init(&adc_cfg);
 }
 
-/* One software-triggered conversion on a channel, polled until done. */
-static int maxim_adc_read_raw(unsigned int channel, int *value)
+static int maxim_adc_convert(unsigned int channel, int *value)
 {
 	mxc_adc_slot_req_t slot_req = { 0 };
 	mxc_adc_conversion_req_t conv_req = {
@@ -74,7 +61,7 @@ static int maxim_adc_read_raw(unsigned int channel, int *value)
 	volatile uint32_t timeout;
 	int ret;
 
-	if (channel >= NO_OS_ARRAY_SIZE(maxim_adc_channels))
+	if (channel >= IIO_ADC_NUM_CHANNELS)
 		return -EINVAL;
 
 	slot_req.channel = MXC_ADC_CH_0 + channel;
@@ -127,26 +114,10 @@ out:
 	return ret;
 }
 
-/* Switch the ADC between its internal 1.25 V and the external reference. */
-static int maxim_adc_set_reference(unsigned int channel, unsigned int reference)
+static int maxim_adc_select_reference(bool external)
 {
-	mxc_adc_refsel_t ref;
-
-	if (channel >= NO_OS_ARRAY_SIZE(maxim_adc_channels))
-		return -EINVAL;
-
-	switch (reference) {
-	case IIO_ADC_REF_INTERNAL:
-		ref = MXC_ADC_REF_INT_1V25;
-		break;
-	case IIO_ADC_REF_EXTERNAL0:
-		ref = MXC_ADC_REF_EXT;
-		break;
-	default:
-		return -ENOTSUP;
-	}
-
-	if (MXC_ADC_ReferenceSelect(ref))
+	if (MXC_ADC_ReferenceSelect(external ? MXC_ADC_REF_EXT :
+				    MXC_ADC_REF_INT_1V25))
 		return -EINVAL;
 
 	return 0;
@@ -154,7 +125,6 @@ static int maxim_adc_set_reference(unsigned int channel, unsigned int reference)
 
 #else /* revA */
 
-/* Init the rev A ADC. */
 static int maxim_adc_init(void)
 {
 	int ret;
@@ -168,12 +138,11 @@ static int maxim_adc_init(void)
 	return 0;
 }
 
-/* One conversion on a channel; the rev A call blocks until done. */
-static int maxim_adc_read_raw(unsigned int channel, int *value)
+static int maxim_adc_convert(unsigned int channel, int *value)
 {
 	int raw;
 
-	if (channel >= NO_OS_ARRAY_SIZE(maxim_adc_channels))
+	if (channel >= IIO_ADC_NUM_CHANNELS)
 		return -EINVAL;
 
 	raw = MXC_ADC_StartConversion(MXC_ADC_CH_0 + channel);
@@ -187,15 +156,197 @@ static int maxim_adc_read_raw(unsigned int channel, int *value)
 
 #endif /* MAXIM_ADC_REVB */
 
-const struct iio_adc_hal iio_adc_hal = {
-	.name            = IIO_ADC_NAME,
-	.channels        = maxim_adc_channels,
-	.num_channels    = NO_OS_ARRAY_SIZE(maxim_adc_channels),
-	.resolution_bits = MAXIM_ADC_RESOLUTION_BITS,
-	.ref_voltage_mv  = IIO_ADC_REF_VOLTAGE_MV,
-	.init            = maxim_adc_init,
-	.read_raw        = maxim_adc_read_raw,
 #if MAXIM_ADC_HAS_REFERENCE
-	.set_reference   = maxim_adc_set_reference,
-#endif
+
+/*
+ * The shared names of the ADC references, by number, so that a reference
+ * means the same to a host whatever ADC is behind it, on this port and on
+ * Zephyr's;
+ * the part has the ones its mask holds, the others are -ENOTSUP.
+ */
+enum maxim_adc_reference {
+	MAXIM_ADC_REF_VDD,
+	MAXIM_ADC_REF_VDD_1_2,
+	MAXIM_ADC_REF_VDD_1_3,
+	MAXIM_ADC_REF_VDD_1_4,
+	MAXIM_ADC_REF_INTERNAL,
+	MAXIM_ADC_REF_EXTERNAL0,
+	MAXIM_ADC_REF_EXTERNAL1,
 };
+
+static const char *const maxim_adc_references[] = {
+	[MAXIM_ADC_REF_VDD]       = "VDD",
+	[MAXIM_ADC_REF_VDD_1_2]   = "VDD/2",
+	[MAXIM_ADC_REF_VDD_1_3]   = "VDD/3",
+	[MAXIM_ADC_REF_VDD_1_4]   = "VDD/4",
+	[MAXIM_ADC_REF_INTERNAL]  = "Internal",
+	[MAXIM_ADC_REF_EXTERNAL0] = "External0",
+	[MAXIM_ADC_REF_EXTERNAL1] = "External1",
+};
+
+#ifdef IIO_ADC_EXT_REF_VOLTAGE_MV
+#define MAXIM_ADC_REFERENCES	(NO_OS_BIT(MAXIM_ADC_REF_INTERNAL) |	\
+				 NO_OS_BIT(MAXIM_ADC_REF_EXTERNAL0))
+#else
+#define MAXIM_ADC_REFERENCES	NO_OS_BIT(MAXIM_ADC_REF_INTERNAL)
+#endif
+
+#endif /* MAXIM_ADC_HAS_REFERENCE */
+
+#define MAXIM_ADC_SCAN_TYPE {						\
+	.sign = 'u',							\
+	.realbits = MAXIM_ADC_RESOLUTION_BITS,				\
+	.storagebits = 16,						\
+	.endianness = NOOS_IIO_BE,					\
+}
+
+struct maxim_adc {
+	const char *trigger;
+	bool external_ref;
+	struct noos_iio_chan channels[IIO_ADC_NUM_CHANNELS];
+};
+
+static struct maxim_adc maxim_adc;
+
+/* The reference in use, in mV. */
+static int maxim_adc_ref_mv(const struct maxim_adc *adc)
+{
+#ifdef IIO_ADC_EXT_REF_VOLTAGE_MV
+	if (adc->external_ref)
+		return IIO_ADC_EXT_REF_VOLTAGE_MV;
+#endif
+
+	return IIO_ADC_REF_VOLTAGE_MV;
+}
+
+#if MAXIM_ADC_HAS_REFERENCE
+
+static int maxim_adc_get_reference(void *dev, const struct noos_iio_chan *ch)
+{
+	struct maxim_adc *adc = dev;
+
+	return adc->external_ref ? MAXIM_ADC_REF_EXTERNAL0 :
+	       MAXIM_ADC_REF_INTERNAL;
+}
+
+/* One reference for the whole ADC, whichever input it is set through. */
+static int maxim_adc_set_reference(void *dev, const struct noos_iio_chan *ch,
+				   unsigned int idx)
+{
+	struct maxim_adc *adc = dev;
+	bool external = idx == MAXIM_ADC_REF_EXTERNAL0;
+	int ret;
+
+	ret = maxim_adc_select_reference(external);
+	if (ret)
+		return ret;
+
+	adc->external_ref = external;
+
+	return 0;
+}
+
+static const struct noos_iio_enum maxim_adc_reference_enum = {
+	.items = maxim_adc_references,
+	.nb_items = NO_OS_ARRAY_SIZE(maxim_adc_references),
+	.mask = MAXIM_ADC_REFERENCES,
+	.get = maxim_adc_get_reference,
+	.set = maxim_adc_set_reference,
+};
+
+static const struct noos_iio_ext_attr maxim_adc_ext[] = {
+	NOOS_IIO_ENUM("reference", &maxim_adc_reference_enum),
+	NOOS_IIO_ENUM_AVAILABLE("reference", &maxim_adc_reference_enum),
+	{ 0 },
+};
+
+#endif /* MAXIM_ADC_HAS_REFERENCE */
+
+static int maxim_adc_read_raw(void *dev, const struct noos_iio_chan *ch,
+			      enum noos_iio_info info, int *val, int *val2)
+{
+	struct maxim_adc *adc = dev;
+	int ret;
+
+	switch (info) {
+	case NOOS_IIO_INFO_RAW:
+		ret = maxim_adc_convert((unsigned int)ch->priv, val);
+		if (ret)
+			return ret;
+
+		return NOOS_IIO_VAL_INT;
+	case NOOS_IIO_INFO_SCALE:
+		/* One LSB in mV: the reference over 2^bits. */
+		*val = maxim_adc_ref_mv(adc);
+		*val2 = MAXIM_ADC_RESOLUTION_BITS;
+		return NOOS_IIO_VAL_FRACTIONAL_LOG2;
+	default:
+		return -EINVAL;
+	}
+}
+
+/* One scan: the enabled inputs, converted one after the other. */
+static int maxim_adc_read_scan(void *dev, uint32_t enabled, int64_t *vals)
+{
+	unsigned int i;
+	int raw, ret;
+
+	for (i = 0; i < IIO_ADC_NUM_CHANNELS; i++) {
+		if (!(enabled & (UINT32_C(1) << i)))
+			continue;
+
+		ret = maxim_adc_convert(i, &raw);
+		if (ret)
+			return ret;
+
+		vals[i] = raw;
+	}
+
+	return 0;
+}
+
+/*
+ * Device-table init (NOOS_IIOD_ONCHIP_ADC()): @param is the name of the
+ * trigger that paces the buffer, or NULL to sample as fast as it converts.
+ */
+int noos_onchip_adc_init(const void *param)
+{
+	unsigned int i;
+	int ret;
+
+	ret = maxim_adc_init();
+	if (ret)
+		return ret;
+
+	maxim_adc = (struct maxim_adc) { .trigger = param };
+
+	for (i = 0; i < IIO_ADC_NUM_CHANNELS; i++) {
+		maxim_adc.channels[i] = (struct noos_iio_chan)
+			NOOS_IIO_VOLTAGE_CHANNEL(i, i, NOOS_IIO_BIT(RAW) |
+						 NOOS_IIO_BIT(SCALE), 0,
+						 MAXIM_ADC_SCAN_TYPE);
+#if MAXIM_ADC_HAS_REFERENCE
+		maxim_adc.channels[i].ext = maxim_adc_ext;
+#endif
+	}
+
+	return 0;
+}
+
+int noos_onchip_adc_get_device_info(struct noos_iio_device_info *info)
+{
+	if (!info)
+		return -EINVAL;
+
+	*info = (struct noos_iio_device_info) {
+		.name = IIO_ADC_NAME,
+		.dev = &maxim_adc,
+		.channels = maxim_adc.channels,
+		.num_channels = IIO_ADC_NUM_CHANNELS,
+		.read_raw = maxim_adc_read_raw,
+		.read_scan = maxim_adc_read_scan,
+		.trigger = maxim_adc.trigger,
+	};
+
+	return 0;
+}

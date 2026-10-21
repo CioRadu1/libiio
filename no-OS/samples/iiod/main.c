@@ -4,13 +4,12 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include <iio_device.h>
+#include <noos_iiod.h>
 
-/*
- * The devices come from the board file (boards/<BOARD>.c), so all that is
- * left here is to start IIOD on this build's transport.
- */
+/* The devices and settings are in common_data.c. */
+extern const struct noos_iiod_param iiod_param;
+
 int main(void)
 {
-	return noos_iiod_run();
+	return noos_iiod_run(&iiod_param);
 }

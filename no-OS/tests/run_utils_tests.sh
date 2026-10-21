@@ -324,20 +324,11 @@ group_adc() {
 	attr_chn "$ADC_DEV" "$ADC_CHN" scale
 	assert_match "$OUT" '^[0-9]+\.[0-9]+$' "scale is a decimal number"
 
-	attr_chn "$ADC_DEV" "$ADC_CHN" gain
-	assert_eq "$OUT" "1" "gain is 1"
-
 	attr_chn "$ADC_DEV" "$ADC_CHN" reference
 	assert_eq "$OUT" "Internal" "the reference is internal"
 
-	attr_chn "$ADC_DEV" "$ADC_CHN" differential
-	assert_eq "$OUT" "0" "the channel is single-ended"
-
-	attr_chn "$ADC_DEV" "$ADC_CHN" process
-	assert_int_in "$OUT" 0 3300 "process is a plausible millivolt reading"
-
-	attr_dev "$ADC_DEV" internal_ref_voltage
-	assert_eq "$OUT" "1250" "the internal reference is 1250 mV"
+	attr_chn "$ADC_DEV" "$ADC_CHN" reference_available
+	assert_match "$OUT" 'Internal' "reference_available lists Internal"
 
 	attr_dev "$ADC_DEV" no_such_attr
 	assert_rc 1 "an unknown attribute is refused"

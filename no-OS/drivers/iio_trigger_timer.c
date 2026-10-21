@@ -13,7 +13,7 @@
 #include <no_os_irq.h>
 #include <no_os_print_log.h>
 #include <iio/iio-backend.h>
-#include "timers.h"
+#include "noos_iiod.h"
 #include "iio_device.h"
 #include "iio_trigger_timer.h"
 
@@ -25,6 +25,7 @@
  * transfer is synchronous either way.
  */
 struct iio_trigger_timer {
+	const struct noos_iiod_timer *cfg;
 	struct no_os_timer_desc *timer;
 	struct no_os_irq_ctrl_desc *irq;
 	struct no_os_callback_desc cb;
@@ -57,7 +58,7 @@ static int trigger_cb_register(void)
 	int ret;
 
 	no_os_irq_global_disable(trig.irq);
-	ret = no_os_irq_register_callback(trig.irq, TRIGGER_IRQ_ID, &trig.cb);
+	ret = no_os_irq_register_callback(trig.irq, trig.cfg->irq_id, &trig.cb);
 	no_os_irq_global_enable(trig.irq);
 
 	return ret;
@@ -67,24 +68,27 @@ static int trigger_cb_register(void)
 static void trigger_cb_unregister(void)
 {
 	no_os_irq_global_disable(trig.irq);
-	no_os_irq_unregister_callback(trig.irq, TRIGGER_IRQ_ID, &trig.cb);
+	no_os_irq_unregister_callback(trig.irq, trig.cfg->irq_id, &trig.cb);
 	no_os_irq_global_enable(trig.irq);
 }
 
-/* One-time IRQ controller setup; the timer itself starts on the first wait. */
-int iio_trigger_timer_init(void)
+/*
+ * Device-table init: @param is the project's struct noos_iiod_timer. Sets up
+ * the IRQ controller; the timer itself starts on the first wait.
+ */
+int iio_trigger_timer_init(const void *param)
 {
-	struct no_os_irq_init_param irq_ip = {
-		.irq_ctrl_id = 0,
-		.platform_ops = TRIGGER_IRQ_OPS,
-		.extra = NULL,
-	};
 	int ret;
+
+	if (!param)
+		return -EINVAL;
 
 	if (trig.irq)
 		return 0;
 
-	ret = no_os_irq_ctrl_init(&trig.irq, &irq_ip);
+	trig.cfg = param;
+
+	ret = no_os_irq_ctrl_init(&trig.irq, trig.cfg->irq);
 	if (ret)
 		return ret;
 
@@ -93,11 +97,11 @@ int iio_trigger_timer_init(void)
 		.ctx = NULL,
 		.event = NO_OS_EVT_TIM_ELAPSED,
 		.peripheral = NO_OS_TIM_IRQ,
-		.handle = TRIGGER_IRQ_HANDLE,
+		.handle = trig.cfg->irq_handle,
 	};
 
-	ret = no_os_irq_set_priority(trig.irq, TRIGGER_IRQ_ID,
-				     TRIGGER_IRQ_PRIORITY);
+	ret = no_os_irq_set_priority(trig.irq, trig.cfg->irq_id,
+				     trig.cfg->irq_priority);
 	if (ret)
 		/* The controller is shared with the other drivers: keep it. */
 		trig.irq = NULL;
@@ -108,17 +112,15 @@ int iio_trigger_timer_init(void)
 /* Program the timer for freq_hz and enable its interrupt. */
 static int trigger_timer_start(void)
 {
-	struct no_os_timer_init_param timer_ip = {
-		.id = TRIGGER_TIMER_ID,
-		.freq_hz = TRIGGER_TIMER_FREQ_HZ,
-		.ticks_count = TRIGGER_TIMER_FREQ_HZ / trig.freq_hz,
-		.platform_ops = TRIGGER_TIMER_OPS,
-		.extra = TRIGGER_TIMER_EXTRA,
-	};
+	struct no_os_timer_init_param timer_ip;
 	int ret;
 
 	if (!trig.irq)
 		return -ENODEV;
+
+	/* The project's timer, with the period sampling_frequency asks for. */
+	timer_ip = *trig.cfg->timer;
+	timer_ip.ticks_count = timer_ip.freq_hz / trig.freq_hz;
 
 	ret = no_os_timer_init(&trig.timer, &timer_ip);
 	if (ret)
@@ -133,7 +135,7 @@ static int trigger_timer_start(void)
 	if (ret)
 		goto remove_timer;
 
-	ret = no_os_irq_enable(trig.irq, TRIGGER_IRQ_ID);
+	ret = no_os_irq_enable(trig.irq, trig.cfg->irq_id);
 	if (ret)
 		goto unregister_cb;
 
@@ -148,7 +150,7 @@ static int trigger_timer_start(void)
 	return 0;
 
 disable_irq:
-	no_os_irq_disable(trig.irq, TRIGGER_IRQ_ID);
+	no_os_irq_disable(trig.irq, trig.cfg->irq_id);
 unregister_cb:
 	trigger_cb_unregister();
 remove_timer:
@@ -165,7 +167,7 @@ void iio_trigger_timer_stop(void)
 		return;
 
 	no_os_timer_stop(trig.timer);
-	no_os_irq_disable(trig.irq, TRIGGER_IRQ_ID);
+	no_os_irq_disable(trig.irq, trig.cfg->irq_id);
 	trigger_cb_unregister();
 	no_os_timer_remove(trig.timer);
 
@@ -181,7 +183,8 @@ int iio_trigger_timer_wait(void)
 {
 	int ret;
 
-	if (!trig.freq_hz)
+	/* Free running: no rate asked for, or no trigger in the device table. */
+	if (!trig.freq_hz || !trig.irq)
 		return 0;
 
 	if (!trig.running) {

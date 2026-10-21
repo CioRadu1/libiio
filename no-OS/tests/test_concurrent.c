@@ -171,41 +171,55 @@ TEST_FUNCTION(concurrent_interleaved_reads)
 	clients_close(cl, NOOS_MAX_CLIENTS);
 }
 
+/* One client's write is the other's read: the trigger's sampling_frequency,
+ * which every board has, is one value on the one board. */
 TEST_FUNCTION(concurrent_shared_device_state)
 {
 	struct test_client cl[2];
-	const struct iio_attr *wattr, *rattr;
-	char got[32] = "";
+	const struct iio_attr *wattr = NULL, *rattr = NULL;
+	struct iio_device *trig0, *trig1;
+	char before[32] = "", got[32] = "";
 	ssize_t ret;
 
 	if (!clients_open_all(cl, 2))
 		return;
 
-	wattr = iio_channel_find_attr(cl[0].chn, "gain");
-	rattr = iio_channel_find_attr(cl[1].chn, "gain");
+	trig0 = iio_context_find_device(cl[0].ctx, "timer0");
+	trig1 = iio_context_find_device(cl[1].ctx, "timer0");
+	if (trig0)
+		wattr = iio_device_find_attr(trig0, "sampling_frequency");
+	if (trig1)
+		rattr = iio_device_find_attr(trig1, "sampling_frequency");
 
-	TEST_ASSERT_PTR_NOT_NULL(wattr, "client 0 finds the gain attribute");
-	TEST_ASSERT_PTR_NOT_NULL(rattr, "client 1 finds the gain attribute");
+	TEST_ASSERT_PTR_NOT_NULL(wattr,
+				 "client 0 finds the trigger's sampling_frequency");
+	TEST_ASSERT_PTR_NOT_NULL(rattr,
+				 "client 1 finds the trigger's sampling_frequency");
 	if (!wattr || !rattr)
 		goto out;
 
-	TEST_IN("client 0 writes gain = \"2\", then client 1 reads it back");
+	ret = iio_attr_read_raw(wattr, before, sizeof(before));
+	TEST_ASSERT(ret > 0, "client 0 reads the sampling frequency");
 
-	ret = iio_attr_write_string(wattr, "2");
+	TEST_IN("client 0 writes sampling_frequency = \"7\", then client 1 "
+		"reads it back");
+
+	ret = iio_attr_write_string(wattr, "7");
 	TEST_OUT("client 0 write ret = %zd", ret);
-	TEST_LONG_EQ(ret > 0 ? 0 : ret, 0, "client 0 writes the gain");
+	TEST_LONG_EQ(ret > 0 ? 0 : ret, 0,
+		     "client 0 writes the sampling frequency");
 
 	ret = iio_attr_read_raw(rattr, got, sizeof(got));
 	TEST_OUT("client 1 read ret = %zd, value = \"%s\"", ret,
 		 ret > 0 ? got : "");
-	TEST_ASSERT(ret > 0, "client 1 reads the gain back");
+	TEST_ASSERT(ret > 0, "client 1 reads the sampling frequency back");
 	if (ret > 0)
-		TEST_STR_EQ(got, "2",
+		TEST_STR_EQ(got, "7",
 			    "both clients share the one physical device");
 
-	ret = iio_attr_write_string(wattr, "1");
-	TEST_OUT("restore gain = \"1\" -> ret %zd", ret);
-	TEST_ASSERT(ret > 0, "the gain is restored to its default");
+	ret = iio_attr_write_string(wattr, before);
+	TEST_OUT("restore sampling_frequency = \"%s\" -> ret %zd", before, ret);
+	TEST_ASSERT(ret > 0, "the sampling frequency is restored");
 
 out:
 	clients_close(cl, 2);
