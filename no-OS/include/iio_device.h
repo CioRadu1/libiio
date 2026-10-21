@@ -23,18 +23,13 @@ extern "C" {
  * Callback types – mirror the Zephyr iio_device_driver_api but take
  * a generic void * instead of "const struct device *".
  */
-typedef int (*noos_iio_add_channels_t)(void *dev,
-		struct iio_device *iio_device);
+typedef int (*noos_iio_add_channels_t)(void *dev, struct iio_device *iio_device);
 
-typedef int (*noos_iio_read_attr_t)(void *dev,
-		const struct iio_device *iio_device,
-		const struct iio_attr *attr,
-		char *dst, size_t len);
+typedef int (*noos_iio_read_attr_t)(void *dev, const struct iio_device *iio_device,
+		const struct iio_attr *attr, char *dst, size_t len);
 
-typedef int (*noos_iio_write_attr_t)(void *dev,
-		const struct iio_device *iio_device,
-		const struct iio_attr *attr,
-		const char *src, size_t len);
+typedef int (*noos_iio_write_attr_t)(void *dev, const struct iio_device *iio_device,
+		const struct iio_attr *attr, const char *src, size_t len);
 
 /*
  * Sample transfer, same arguments as the Zephyr readbuf/writebuf: @mask says
@@ -42,14 +37,10 @@ typedef int (*noos_iio_write_attr_t)(void *dev,
  * out as iio_device_get_sample_size() describes -- the enabled channels only,
  * in channel order, each at its own format.
  */
-typedef int (*noos_iio_read_samples_t)(void *dev,
-		const struct iio_device *iio_device,
-		const struct iio_channels_mask *mask,
-		void *data, size_t bytes);
-typedef int (*noos_iio_write_samples_t)(void *dev,
-		const struct iio_device *iio_device,
-		const struct iio_channels_mask *mask,
-		const void *data, size_t bytes);
+typedef int (*noos_iio_read_samples_t)(void *dev, const struct iio_device *iio_device,
+		const struct iio_channels_mask *mask, void *data, size_t bytes);
+typedef int (*noos_iio_write_samples_t)(void *dev, const struct iio_device *iio_device,
+		const struct iio_channels_mask *mask, const void *data, size_t bytes);
 
 /* Buffer enabled or disabled by the client. */
 typedef int (*noos_iio_enable_buffer_t)(void *dev, bool enable);
@@ -88,25 +79,25 @@ typedef int (*noos_iio_enable_buffer_t)(void *dev, bool enable);
  * order, so a mask written for a Linux driver means the same here. */
 enum noos_iio_info {
 	NOOS_IIO_INFO_RAW,
-	NOOS_IIO_INFO_PROCESSED,		/* "input" */
+	NOOS_IIO_INFO_PROCESSED, /* "input" */
 	NOOS_IIO_INFO_SCALE,
 	NOOS_IIO_INFO_OFFSET,
 	NOOS_IIO_INFO_CALIBSCALE,
 	NOOS_IIO_INFO_CALIBBIAS,
-	NOOS_IIO_INFO_PEAK,			/* "peak_raw" */
+	NOOS_IIO_INFO_PEAK, /* "peak_raw" */
 	NOOS_IIO_INFO_PEAK_SCALE,
 	NOOS_IIO_INFO_QUADRATURE_CORRECTION_RAW,
-	NOOS_IIO_INFO_AVERAGE_RAW,		/* "mean_raw" */
+	NOOS_IIO_INFO_AVERAGE_RAW, /* "mean_raw" */
 	NOOS_IIO_INFO_LOW_PASS_FILTER_3DB_FREQUENCY,
 	NOOS_IIO_INFO_HIGH_PASS_FILTER_3DB_FREQUENCY,
-	NOOS_IIO_INFO_SAMP_FREQ,		/* "sampling_frequency" */
+	NOOS_IIO_INFO_SAMP_FREQ, /* "sampling_frequency" */
 	NOOS_IIO_INFO_FREQUENCY,
 	NOOS_IIO_INFO_PHASE,
 	NOOS_IIO_INFO_HARDWAREGAIN,
 	NOOS_IIO_INFO_HYSTERESIS,
 	NOOS_IIO_INFO_HYSTERESIS_RELATIVE,
-	NOOS_IIO_INFO_INT_TIME,			/* "integration_time" */
-	NOOS_IIO_INFO_ENABLE,			/* "en" */
+	NOOS_IIO_INFO_INT_TIME, /* "integration_time" */
+	NOOS_IIO_INFO_ENABLE,	/* "en" */
 	NOOS_IIO_INFO_CALIBHEIGHT,
 	NOOS_IIO_INFO_CALIBWEIGHT,
 	NOOS_IIO_INFO_DEBOUNCE_COUNT,
@@ -116,13 +107,13 @@ enum noos_iio_info {
 	NOOS_IIO_INFO_THERMOCOUPLE_TYPE,
 	NOOS_IIO_INFO_CALIBAMBIENT,
 	NOOS_IIO_INFO_ZEROPOINT,
-	NOOS_IIO_INFO_TROUGH,			/* "trough_raw" */
+	NOOS_IIO_INFO_TROUGH, /* "trough_raw" */
 	NOOS_IIO_INFO_CONVDELAY,
 	NOOS_IIO_INFO_POWERFACTOR,
 	NOOS_IIO_INFO_COUNT,
 };
 
-#define NOOS_IIO_INFO_BIT(info)	(UINT64_C(1) << (info))
+#define NOOS_IIO_INFO_BIT(info) (UINT64_C(1) << (info))
 
 /*
  * What read_raw returns and write_raw takes, as Linux's IIO_VAL_* (same
@@ -151,7 +142,7 @@ enum noos_iio_val {
 };
 
 /* The most values read_raw_multi gives, as Linux's INDIO_MAX_RAW_ELEMENTS. */
-#define NOOS_IIO_MAX_RAW_ELEMENTS	4
+#define NOOS_IIO_MAX_RAW_ELEMENTS 4
 
 /* What read_avail returns: vals is a list, or [min, step, max]. Values are
  * ints for NOOS_IIO_VAL_INT and _CHAR, {val, val2} pairs for the other
@@ -281,8 +272,8 @@ enum noos_iio_endian {
 };
 
 /* A scan element's sign, as Linux's IIO_SCAN_FORMAT_*_INT. */
-#define NOOS_IIO_SCAN_FORMAT_SIGNED_INT		's'
-#define NOOS_IIO_SCAN_FORMAT_UNSIGNED_INT	'u'
+#define NOOS_IIO_SCAN_FORMAT_SIGNED_INT 's'
+#define NOOS_IIO_SCAN_FORMAT_UNSIGNED_INT 'u'
 
 /**
  * struct noos_iio_scan_type - how a scan element is stored in a sample, as
@@ -315,10 +306,10 @@ struct noos_iio_chan;
  * read_attr/write_attr do. */
 struct noos_iio_ext_attr {
 	const char *name;
-	int (*read)(void *dev, const struct noos_iio_chan *ch, intptr_t priv,
-		    char *dst, size_t len);
-	int (*write)(void *dev, const struct noos_iio_chan *ch, intptr_t priv,
-		     const char *src, size_t len);
+	int (*read)(void *dev, const struct noos_iio_chan *ch, intptr_t priv, char *dst,
+			size_t len);
+	int (*write)(void *dev, const struct noos_iio_chan *ch, intptr_t priv, const char *src,
+			size_t len);
 	intptr_t priv;
 };
 
@@ -388,25 +379,23 @@ typedef int (*noos_iio_read_raw_t)(void *dev, const struct noos_iio_chan *ch,
 		enum noos_iio_info info, int *val, int *val2);
 /* Several values at once (NOOS_IIO_VAL_INT_MULTIPLE ...): at most @max_len
  * of them in @vals, their count in @val_len; returns their NOOS_IIO_VAL_*. */
-typedef int (*noos_iio_read_raw_multi_t)(void *dev,
-		const struct noos_iio_chan *ch, int max_len, int *vals,
-		int *val_len, enum noos_iio_info info);
+typedef int (*noos_iio_read_raw_multi_t)(void *dev, const struct noos_iio_chan *ch, int max_len,
+		int *vals, int *val_len, enum noos_iio_info info);
 typedef int (*noos_iio_write_raw_t)(void *dev, const struct noos_iio_chan *ch,
 		enum noos_iio_info info, int val, int val2);
-typedef int (*noos_iio_write_raw_get_fmt_t)(void *dev,
-		const struct noos_iio_chan *ch, enum noos_iio_info info);
+typedef int (*noos_iio_write_raw_get_fmt_t)(
+		void *dev, const struct noos_iio_chan *ch, enum noos_iio_info info);
 typedef int (*noos_iio_read_avail_t)(void *dev, const struct noos_iio_chan *ch,
 		enum noos_iio_info info, const int **vals, int *type, int *length);
 /* One scan: vals[i] for each channels[i] whose bit is set in @enabled. */
-typedef int (*noos_iio_read_scan_t)(void *dev, uint32_t enabled,
-		int64_t *vals);
+typedef int (*noos_iio_read_scan_t)(void *dev, uint32_t enabled, int64_t *vals);
 typedef int (*noos_iio_wait_scan_t)(void *dev);
 
 /* NOOS_IIO_BIT(SCALE): the bit of NOOS_IIO_INFO_SCALE, for channel masks. */
-#define NOOS_IIO_BIT(info)	NOOS_IIO_INFO_BIT(NOOS_IIO_INFO_##info)
+#define NOOS_IIO_BIT(info) NOOS_IIO_INFO_BIT(NOOS_IIO_INFO_##info)
 
 /* The scan_type of a channel that is not a scan element. */
-#define NOOS_IIO_NO_SCAN_TYPE	{ 0 }
+#define NOOS_IIO_NO_SCAN_TYPE { 0 }
 
 /**
  * struct noos_iio_value - a standard attribute of the channels of one type
@@ -441,7 +430,7 @@ struct noos_iio_value {
 };
 
 /* Ints per value of a NOOS_IIO_VAL_* type in a table. */
-#define NOOS_IIO_VAL_STRIDE(type)					\
+#define NOOS_IIO_VAL_STRIDE(type) \
 	((type) == NOOS_IIO_VAL_INT || (type) == NOOS_IIO_VAL_CHAR ? 1 : 2)
 
 /*
@@ -454,13 +443,14 @@ struct noos_iio_value {
  * NOOS_IIO_CONST(ACCEL, SCALE, INT_PLUS_NANO, 0, 38245) gives
  * in_accel_scale = 0.000038245.
  */
-#define NOOS_IIO_CONST(_chan, _info, _type, ...) {			\
-	.chan_type = NOOS_IIO_##_chan,					\
-	.info = NOOS_IIO_INFO_##_info,					\
-	.type = NOOS_IIO_VAL_##_type,					\
-	.vals = (const int[]){ __VA_ARGS__ },				\
-	.nb = 1,							\
-}
+#define NOOS_IIO_CONST(_chan, _info, _type, ...) \
+	{ \
+		.chan_type = NOOS_IIO_##_chan, \
+		.info = NOOS_IIO_INFO_##_info, \
+		.type = NOOS_IIO_VAL_##_type, \
+		.vals = (const int[]){ __VA_ARGS__ }, \
+		.nb = 1, \
+	}
 
 /*
  * NOOS_IIO_LIST - an attribute picked from a fixed table
@@ -473,16 +463,16 @@ struct noos_iio_value {
  * A write must equal a row (else -EINVAL) and reaches @_set as its index;
  * "_available" lists the table.
  */
-#define NOOS_IIO_LIST(_chan, _info, _type, _table, _get, _set) {	\
-	.chan_type = NOOS_IIO_##_chan,					\
-	.info = NOOS_IIO_INFO_##_info,					\
-	.type = NOOS_IIO_VAL_##_type,					\
-	.vals = (_table),						\
-	.nb = sizeof(_table) / sizeof(int) /				\
-	      NOOS_IIO_VAL_STRIDE(NOOS_IIO_VAL_##_type),		\
-	.get = (_get),							\
-	.set = (_set),							\
-}
+#define NOOS_IIO_LIST(_chan, _info, _type, _table, _get, _set) \
+	{ \
+		.chan_type = NOOS_IIO_##_chan, \
+		.info = NOOS_IIO_INFO_##_info, \
+		.type = NOOS_IIO_VAL_##_type, \
+		.vals = (_table), \
+		.nb = sizeof(_table) / sizeof(int) / NOOS_IIO_VAL_STRIDE(NOOS_IIO_VAL_##_type), \
+		.get = (_get), \
+		.set = (_set), \
+	}
 
 /*
  * NOOS_IIO_LIST_FN - as NOOS_IIO_LIST, for a table that changes at run time
@@ -493,14 +483,15 @@ struct noos_iio_value {
  * For a table that follows the device's state, e.g. the ADXL355's
  * high-pass corners, which scale with its ODR.
  */
-#define NOOS_IIO_LIST_FN(_chan, _info, _type, _avail, _get, _set) {	\
-	.chan_type = NOOS_IIO_##_chan,					\
-	.info = NOOS_IIO_INFO_##_info,					\
-	.type = NOOS_IIO_VAL_##_type,					\
-	.avail = (_avail),						\
-	.get = (_get),							\
-	.set = (_set),							\
-}
+#define NOOS_IIO_LIST_FN(_chan, _info, _type, _avail, _get, _set) \
+	{ \
+		.chan_type = NOOS_IIO_##_chan, \
+		.info = NOOS_IIO_INFO_##_info, \
+		.type = NOOS_IIO_VAL_##_type, \
+		.avail = (_avail), \
+		.get = (_get), \
+		.set = (_set), \
+	}
 
 /* The table entry a channel of a table-driven device was created from. */
 const struct noos_iio_chan *noos_iio_chan_of(const struct iio_channel *chn);
@@ -609,27 +600,29 @@ struct noos_iio_enum {
 	int (*set)(void *dev, const struct noos_iio_chan *ch, unsigned int idx);
 };
 
-int noos_iio_enum_read(void *dev, const struct noos_iio_chan *ch,
-		       intptr_t priv, char *dst, size_t len);
-int noos_iio_enum_write(void *dev, const struct noos_iio_chan *ch,
-			intptr_t priv, const char *src, size_t len);
-int noos_iio_enum_available(void *dev, const struct noos_iio_chan *ch,
-			    intptr_t priv, char *dst, size_t len);
+int noos_iio_enum_read(
+		void *dev, const struct noos_iio_chan *ch, intptr_t priv, char *dst, size_t len);
+int noos_iio_enum_write(void *dev, const struct noos_iio_chan *ch, intptr_t priv, const char *src,
+		size_t len);
+int noos_iio_enum_available(
+		void *dev, const struct noos_iio_chan *ch, intptr_t priv, char *dst, size_t len);
 
 /* noos_iio_ext_attr entries for a struct noos_iio_enum: the attribute
  * itself, and its "_available" list of names. */
-#define NOOS_IIO_ENUM(_name, _e) {				\
-	.name = (_name),					\
-	.read = noos_iio_enum_read,				\
-	.write = noos_iio_enum_write,				\
-	.priv = (intptr_t)(_e),					\
-}
+#define NOOS_IIO_ENUM(_name, _e) \
+	{ \
+		.name = (_name), \
+		.read = noos_iio_enum_read, \
+		.write = noos_iio_enum_write, \
+		.priv = (intptr_t)(_e), \
+	}
 
-#define NOOS_IIO_ENUM_AVAILABLE(_name, _e) {			\
-	.name = _name "_available",				\
-	.read = noos_iio_enum_available,			\
-	.priv = (intptr_t)(_e),					\
-}
+#define NOOS_IIO_ENUM_AVAILABLE(_name, _e) \
+	{ \
+		.name = _name "_available", \
+		.read = noos_iio_enum_available, \
+		.priv = (intptr_t)(_e), \
+	}
 
 /*
  * Make a table-driven device's callbacks (add_channels, read_attr,
@@ -650,14 +643,11 @@ int noos_iio_table_install(struct noos_iio_device_info *info);
  */
 ssize_t noos_value_format_int(char *dst, size_t len, long long val);
 ssize_t noos_value_format_str(char *dst, size_t len, const char *val);
-ssize_t noos_value_format_fixed(char *dst, size_t len, int val, int val2,
-				unsigned int digits);
+ssize_t noos_value_format_fixed(char *dst, size_t len, int val, int val2, unsigned int digits);
 int noos_value_parse_int(const char *src, long long *val);
-int noos_value_parse_fixed(const char *src, int *val, int *val2,
-			   unsigned int digits);
+int noos_value_parse_fixed(const char *src, int *val, int *val2, unsigned int digits);
 /* The index of @src (@len bytes, trailing NULs/newlines ignored) in @table. */
-int noos_value_match_str(const char *const *table, size_t count,
-			 const char *src, size_t len);
+int noos_value_match_str(const char *const *table, size_t count, const char *src, size_t len);
 
 /**
  * noos_iio_register_device() - register an IIO device before context creation

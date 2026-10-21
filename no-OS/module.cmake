@@ -7,23 +7,51 @@
 # into the project, whose main() then calls noos_iiod_run() with its device
 # table (include/noos_iiod.h, PORTING.md).
 #
-#   IIOD_TRANSPORT       uart (default), usb or network
-#   WITH_IIOD_V0_COMPAT  also serve libiio v0.x clients (default ON)
+# From no-OS's Kconfig:
+#   CONFIG_LIBIIO_TRANSPORT_UART / _USB / _NETWORK   the transport (uart if none)
+#   CONFIG_LIBIIO_V0_COMPAT                          also serve libiio v0.x clients
+# IIOD_TRANSPORT (uart, usb, network) overrides the transport from the command
+# line.
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/libiio_noos_server.cmake)
 
-set(IIOD_TRANSPORT uart CACHE STRING "IIOD transport: uart, usb or network")
-set_property(CACHE IIOD_TRANSPORT PROPERTY STRINGS uart usb network)
-option(WITH_IIOD_V0_COMPAT "Serve libiio v0.x clients (ASCII protocol)" ON)
+if (CONFIG_LIBIIO_TRANSPORT_USB)
+    set(_libiio_transport usb)
+elseif (CONFIG_LIBIIO_TRANSPORT_NETWORK)
+    set(_libiio_transport network)
+else ()
+    set(_libiio_transport uart)
+endif ()
+set(IIOD_TRANSPORT
+    ${_libiio_transport}
+    CACHE STRING "IIOD transport: uart, usb or network")
 
 set(_libiio_v0_compat "")
-if(WITH_IIOD_V0_COMPAT)
-  set(_libiio_v0_compat V0_COMPAT)
-endif()
-libiio_noos_add_server(libiio-iiod TRANSPORT ${IIOD_TRANSPORT} ${_libiio_v0_compat})
+if (CONFIG_LIBIIO_V0_COMPAT)
+    set(_libiio_v0_compat V0_COMPAT)
+endif ()
 
-if(DEFINED NO_OS_PROJECT_NAME AND TARGET ${NO_OS_PROJECT_NAME})
-  set_property(TARGET ${NO_OS_PROJECT_NAME} APPEND PROPERTY LINK_LIBRARIES libiio-iiod)
-else()
-  message(STATUS "libiio: no project executable to link; link libiio-iiod yourself")
-endif()
+libiio_noos_add_server(libiio-iiod TRANSPORT ${IIOD_TRANSPORT}
+                       ${_libiio_v0_compat})
+
+# The platform's glue and the project's own files include libiio's headers
+# (noos_iiod.h, iio_channels.h, iio_usb_hal.h, ...), and they are compiled
+# in no-os.
+target_include_directories(
+    no-os PUBLIC ${LIBIIO_NOOS_DIR}/include ${LIBIIO_NOOS_DIR}/drivers
+                 ${LIBIIO_DIR}/include)
+target_compile_definitions(no-os PUBLIC LIBIIO_STATIC=1)
+
+# no-OS adds the project before its libraries, so the executable exists.
+if (DEFINED NO_OS_PROJECT_NAME AND TARGET ${NO_OS_PROJECT_NAME})
+    # Appended, not target_link_libraries(): projects link no-os with the
+    # plain signature, which CMake will not mix with a keyword one.
+    set_property(
+        TARGET ${NO_OS_PROJECT_NAME}
+        APPEND
+        PROPERTY LINK_LIBRARIES libiio-iiod)
+else ()
+    message(
+        STATUS
+            "libiio: no project executable to link; link libiio-iiod yourself")
+endif ()

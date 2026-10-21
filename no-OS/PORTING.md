@@ -84,37 +84,47 @@ values with each channel's `scan_type`. Registration checks the tables and
 refuses a wrong one with `-EINVAL`.
 
 The MCU's own ADC is such a device, from the platform's glue
-(`platform/maxim/adc/maxim_adc.c`): one table row, `NOOS_IIOD_ONCHIP_ADC()`.
+(no-OS `drivers/platform/maxim/common/maxim_iio_adc.c`, `CONFIG_IIO_ADC_MAXIM`):
+one table row, `NOOS_IIOD_ONCHIP_ADC()`.
 
 ## Step by step
 
-Worked example: no-OS's `projects/iio_demo` (`adc_demo` + `dac_demo`). The
-finished result is `samples/iiod/common_data.c` built with
-`-DIIOD_IIO_DEMO=ON`, which runs on the AD-APARD32690-SL.
+Worked example: no-OS's `projects/iio_demo`, its "Basic example served by
+libiio" (`CONFIG_IIO_DEMO_LIBIIO_EXAMPLE`, `src/examples/libiio_example/`,
+the table at the end of `src/common/common_data.c`). Variants
+`libiio.conf`, `libiio_usb.conf` and `libiio_network.conf` serve
+`adc_demo`, `dac_demo`, the part's ADC and `timer0` over uart, usb and TCP on
+the AD-APARD32690-SL:
+
+```
+cmake -B build --preset ad-apard32690-sl -DPROJECT_DEFCONFIG=iio_demo/libiio.conf
+cmake --build build --target iio_demo
+cmake --build build --target flash
+```
 
 ### 1. Kconfig
 
-Turn `CONFIG_IIO` off in the project's `.conf`. Keep the driver options
-(`CONFIG_ADC_DEMO=y`, ...) and the transport's no-OS options: `CONFIG_UART`,
-`CONFIG_TIMER`, `CONFIG_IRQ`, plus `CONFIG_NET`/`CONFIG_LWIP` for network or
-`CONFIG_USB_UART_MAXIM` for usb on Maxim (see `configs/` and
-`platform/maxim/configs/` for what the sample turns on).
+In the project's `.conf`: `CONFIG_IIO` off, `CONFIG_LIBIIO=y` and one of
+`CONFIG_LIBIIO_TRANSPORT_UART` / `_USB` / `_NETWORK`
+(`CONFIG_LIBIIO_V0_COMPAT` for libiio v0.x clients: off by default, it needs
+libiio's `tinyiiod/ascii-ops.c`). Keep the
+driver options (`CONFIG_ADC_DEMO=y`, ...) and the transport's no-OS options:
+`CONFIG_UART`, `CONFIG_TIMER`, `CONFIG_IRQ`; for network `CONFIG_NET`,
+`CONFIG_SPI`, `CONFIG_DMA` and the PHY (`CONFIG_ADIN1110`); for usb on Maxim
+`CONFIG_USB_UART_MAXIM` (MAXUSB). `CONFIG_IIO_ADC_MAXIM` adds the part's own
+ADC. `iio_demo`'s `libiio*.conf` and `boards/libiio*/` show a full set.
 
 ### 2. CMake
 
-Turn `CONFIG_LIBIIO` on and pick the transport (`IIOD_TRANSPORT`: uart, usb
-or network; `WITH_IIOD_V0_COMPAT` for libiio v0.x clients). no-OS's
-`cmake/libraries/libiio.cmake` includes libiio's `no-OS/module.cmake`, the way
-it takes lwIP; that builds `libiio-iiod` with `libiio_noos_add_server()` and
-links it into the project. Nothing goes in the project's `CMakeLists.txt`.
+Nothing in the project's `CMakeLists.txt`. With `CONFIG_LIBIIO`, no-OS's
+`cmake/libraries/libiio.cmake` finds libiio the way `lwip.cmake` finds lwIP
+(`NO_OS_DEP_LIBIIO_PATH` to point at a local tree, else a clone of
+`CONFIG_LIBIIO_VERSION`) and includes its `no-OS/module.cmake`, which builds
+`libiio-iiod` (`libiio_noos_add_server()`) and links it into the project.
 
 `libiio-iiod` is an OBJECT library, like `no-os`, so it carries libiio's
 objects straight into the executable. The executable keeps linking `no-os`
 as every no-OS project already does.
-
-The no-OS side of this (the `CONFIG_LIBIIO` Kconfig entry and
-`cmake/libraries/libiio.cmake`, a few lines like `lwip.cmake`) belongs to the
-no-OS repository and is not there yet.
 
 ### 3. Device table, in `common_data.c`
 
@@ -282,7 +292,7 @@ the console and left out; the others are still served.
 | project-supplied buffer memory (`read_buff`/`write_buff`) | not used; blocks are allocated |
 | WiFi (ESP8266) and W5500 networking | missing: only lwIP |
 | buffer attributes from a descriptor | missing |
-| the usb transport on a platform other than Maxim | needs `platform/<name>/` usb glue |
+| the usb transport on a platform other than Maxim | needs that platform's glue behind `iio_usb_hal.h` (no-OS `maxim_iio_usb.c` is the example) |
 
 ## Known limits
 
@@ -296,39 +306,36 @@ the console and left out; the others are still served.
 - A no-OS trigger that does not tick for 5 s ends the capture with
   `-ETIMEDOUT`. A software-triggered capture can only use `trigger_now`
   writes made before it starts.
-- `module.cmake` has not been tried from inside a real no-OS project tree
-  (that needs the no-OS side above); the sample builds `libiio-iiod` with
-  the same `libiio_noos_add_server()`.
+- Only the AD-APARD32690-SL has run on hardware, with `iio_demo`'s libiio
+  variants built by no-OS.
 
 ## What each file is
 
+In libiio's `no-OS/` (the library):
+
 | file | purpose |
 |---|---|
-| `CMakeLists.txt` | the sample firmware and the host tests |
-| `module.cmake` | what a no-OS project gets with `CONFIG_LIBIIO`: builds and links `libiio-iiod` |
-| `cmake/libiio_noos_server.cmake` | `libiio_noos_add_server()`: the `libiio-iiod` OBJECT library, for both of the above |
-| `CMakePresets.json` | `uart`/`usb`/`network` presets and their `flash-*` targets, one build dir each |
-| `cmake/no_os_locate.cmake` | sample build: finds the no-OS checkout |
-| `cmake/no_os_board.cmake` | sample build: takes `PLATFORM`, `TARGET`, defconfig from no-OS's board preset |
-| `configs/<transport>.conf` | sample build: no-OS Kconfig fragment per transport |
-| `backend.c` | the libiio backend (`no-os:`): builds the context from the registered devices, routes attributes, buffers and registers to them |
-| `backend_table.c` | the table layer: makes a table device's channels and attributes, formats and parses values, packs samples; enum attributes and value helpers |
+| `module.cmake` | what no-OS includes with `CONFIG_LIBIIO`: builds and links `libiio-iiod` |
+| `cmake/libiio_noos_server.cmake` | `libiio_noos_add_server()`: the `libiio-iiod` OBJECT library |
+| `backend.c` | the libiio backend (`no-os:`): builds the context from the registered devices, routes attributes, buffers, registers and the trigger choice to them |
+| `backend_table.c` | the table layer: a table device's channels and attributes, value formatting and parsing, sample packing; enum attributes and value helpers |
 | `iiod/uart.c`, `network.c`, `usb.c` | transports: move bytes between the host and libiio's responder; one is built |
 | `include/noos_iiod.h` | the project's API: `noos_iiod_run()`, device table, settings, `NOOS_IIOD_ONCHIP_ADC()` / `NOOS_IIOD_TIMER_TRIGGER()` |
 | `include/iio_channels.h` | standard channels for table devices: ADC inputs, accelerometers, temperature |
-| `include/iio_noos_driver.h` | serving an existing no-OS driver or trigger: `NOOS_IIOD_DRIVER_DEFINE()`, `NOOS_IIOD_TRIGGER_DEFINE()` |
-| `include/iio_device.h` | how a device plugs into `backend.c`: `noos_iio_device_info`, the table types (`noos_iio_chan`, `NOOS_IIO_BIT()`, values, enums) |
+| `include/iio_device.h` | how a device plugs into `backend.c`: `noos_iio_device_info`, the table types |
+| `include/iio_noos_driver.h` | serving an unconverted no-OS driver or trigger: `NOOS_IIOD_DRIVER_DEFINE()`, `NOOS_IIOD_TRIGGER_DEFINE()` |
 | `include/iio_usb_hal.h` | contract between `iiod/usb.c` and a platform's usb glue |
 | `include/iio-config.h`, `include/compat/sys/socket.h` | shims so upstream libiio and its v0 parser compile on bare metal |
-| `drivers/iio_noos_driver.c` | serves unmodified no-OS `iio_<part>.c` drivers through libiio |
-| `drivers/iio_noos_driver_desc.c/.h` | reads the no-OS descriptor for it, and provides what drivers call into no-OS's IIO server (`iio_buffer_*`, `iio_trig_enable()`, `iio_hw_trig_init()`, ...); separate because no-OS and libiio both define `struct iio_device` |
-| `drivers/iio_trigger_timer.c/.h` | `timer0` trigger: paces sampling on a project-given hardware timer |
-| `platform/maxim/platform.cmake` | Maxim: MSDK sources no-OS leaves out, which ADC driver, usb glue |
-| `platform/maxim/adc/maxim_adc.c/.h` | Maxim on-chip ADC (MAX32690, MAX32655) as a table device: `NOOS_IIOD_ONCHIP_ADC()` |
-| `platform/maxim/iio_usb_maxim.c` | Maxim usb glue behind `iio_usb_hal.h` (MAXUSB) |
-| `platform/maxim/configs/usb.conf` | Maxim Kconfig for the usb transport |
-| `platform/maxim/parameters.h`, `netdev_adin1110.h` | the sample's settings on Maxim (uart, timers, usb ids, ADIN1110); a project keeps its own |
-| `samples/iiod/main.c` | the sample's `main()`: one call |
-| `samples/iiod/common_data.c` | the sample's device table and settings |
-| `tests/` | host programs and scripts that run the API and tool tests against a board |
-| `ARCHITECTURE.md` | internals; parts predate this guide |
+| `drivers/iio_noos_driver.c` | libiio side of the bridge for unconverted no-OS drivers and triggers |
+| `drivers/iio_noos_driver_desc.c/.h` | no-OS side of the bridge (reads the no-OS descriptor; provides `iio_buffer_*`, `iio_trig_*`, `iio_hw_trig_*`); separate because no-OS and libiio both define `struct iio_device` |
+| `drivers/iio_trigger_timer.c/.h` | `timer0` trigger on a project-given hardware timer |
+| `ARCHITECTURE.md` | internals |
+
+In no-OS (branch adding `CONFIG_LIBIIO`):
+
+| file | purpose |
+|---|---|
+| `libraries/Kconfig`, `libraries/CMakeLists.txt`, `cmake/libraries/libiio.cmake` | `CONFIG_LIBIIO`, transport choice, finding libiio |
+| `drivers/platform/maxim/common/maxim_iio_adc.c/.h` | the part's own ADC as a table device (`CONFIG_IIO_ADC_MAXIM`) |
+| `drivers/platform/maxim/common/maxim_iio_usb.c` | MAXUSB glue behind libiio's usb transport |
+| `projects/iio_demo` | the worked example: `libiio_example`, `libiio*.conf`, settings in `src/platform/maxim/parameters.*` |

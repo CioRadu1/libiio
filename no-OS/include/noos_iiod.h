@@ -114,21 +114,23 @@ struct noos_iiod_param {
 int noos_onchip_adc_init(const void *param);
 int noos_onchip_adc_get_device_info(struct noos_iio_device_info *info);
 
-#define NOOS_IIOD_ONCHIP_ADC(_trigger) {				\
-	.init = noos_onchip_adc_init,					\
-	.param = (_trigger),						\
-	.get_info = noos_onchip_adc_get_device_info,			\
-}
+#define NOOS_IIOD_ONCHIP_ADC(_trigger) \
+	{ \
+		.init = noos_onchip_adc_init, \
+		.param = (_trigger), \
+		.get_info = noos_onchip_adc_get_device_info, \
+	}
 
 /* The timer0 trigger, on the hardware timer @_timer (struct noos_iiod_timer). */
 int iio_trigger_timer_init(const void *param);
 int iio_trigger_timer_get_device_info(struct noos_iio_device_info *info);
 
-#define NOOS_IIOD_TIMER_TRIGGER(_timer) {				\
-	.init = iio_trigger_timer_init,					\
-	.param = (_timer),						\
-	.get_info = iio_trigger_timer_get_device_info,			\
-}
+#define NOOS_IIOD_TIMER_TRIGGER(_timer) \
+	{ \
+		.init = iio_trigger_timer_init, \
+		.param = (_timer), \
+		.get_info = iio_trigger_timer_get_device_info, \
+	}
 
 /*
  * Register the devices and run iiod on the transport chosen at build time.

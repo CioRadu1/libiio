@@ -4,48 +4,48 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include <string.h>
 #include <errno.h>
-#include <stdbool.h>
-#include <no_os_uart.h>
+#include <no_os_irq.h>
 #include <no_os_print_log.h>
 #include <no_os_timer.h>
-#include <no_os_irq.h>
+#include <no_os_uart.h>
+#include <stdbool.h>
+#include <string.h>
 #include <tinyiiod/tinyiiod.h>
-#include "noos_iiod.h"
+
 #include "iio_device.h"
 #include "iio_usb_hal.h"
+#include "noos_iiod.h"
 
 #ifndef IIO_USB_NUM_PIPES
-#define IIO_USB_NUM_PIPES	2
+#define IIO_USB_NUM_PIPES 2
 #endif
 
-#define IIO_USB_IFACE_NAME	"IIO"
+#define IIO_USB_IFACE_NAME "IIO"
 
-#define IIO_USB_RX_RING_SIZE	2048
-#define IIO_USB_RX_RING_MASK	(IIO_USB_RX_RING_SIZE - 1)
+#define IIO_USB_RX_RING_SIZE 2048
+#define IIO_USB_RX_RING_MASK (IIO_USB_RX_RING_SIZE - 1)
 
 /* Timeouts in usb_ticks, from the project's tick rate (usb_tick_init()). */
-static uint32_t usb_io_timeout_ticks;	/* 10 s */
+static uint32_t usb_io_timeout_ticks; /* 10 s */
 /* How long a data pipe may hold a response back while pipe 0 has a command. */
-static uint32_t usb_stall_ticks;	/* 200 ms */
+static uint32_t usb_stall_ticks; /* 200 ms */
 
 struct iio_usb_pipe {
-	volatile bool		open;
+	volatile bool open;
 	/* The host gave up on this data pipe (a cancelled stream): its
 	 * commands are dropped and its responses fail until it is reopened. */
-	volatile bool		stalled;
-	volatile uint32_t	open_seq;
-	volatile bool		rx_pending;
-	volatile int		rx_err;
-	volatile uint32_t	rx_head;
-	volatile uint32_t	rx_tail;
-	volatile bool		tx_done;
-	volatile int		tx_err;
-	volatile uint32_t	tx_actual;
-	uint8_t			rx_chunk[IIO_USB_MAX_PACKET]
-	__attribute__((aligned(4)));
-	uint8_t			rx_ring[IIO_USB_RX_RING_SIZE];
+	volatile bool stalled;
+	volatile uint32_t open_seq;
+	volatile bool rx_pending;
+	volatile int rx_err;
+	volatile uint32_t rx_head;
+	volatile uint32_t rx_tail;
+	volatile bool tx_done;
+	volatile int tx_err;
+	volatile uint32_t tx_actual;
+	uint8_t rx_chunk[IIO_USB_MAX_PACKET] __attribute__((aligned(4)));
+	uint8_t rx_ring[IIO_USB_RX_RING_SIZE];
 };
 
 static struct iio_usb_pipe pipes[IIO_USB_NUM_PIPES];
@@ -228,8 +228,7 @@ static void pipe_submit_rx(unsigned int index)
 	struct iio_usb_pipe *p = &pipes[index];
 	uint16_t mps = iio_usb_ops.max_packet();
 
-	if (!configured || !p->open || p->stalled || p->rx_pending ||
-	    p->rx_err)
+	if (!configured || !p->open || p->stalled || p->rx_pending || p->rx_err)
 		return;
 
 	if (ring_free(p) < mps)
@@ -378,8 +377,7 @@ again:
  * Interpreter write: send the reply on the command's pipe; give up early if
  * the host abandoned that pipe.
  */
-static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
-			      size_t size)
+static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf, size_t size)
 {
 	unsigned int index = cur_pipe;
 	struct iio_usb_pipe *p = &pipes[index];
@@ -401,8 +399,7 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 		p->tx_err = 0;
 		p->tx_actual = 0;
 
-		if (iio_usb_ops.submit_tx(index, (const uint8_t *)buf + total,
-					  size - total)) {
+		if (iio_usb_ops.submit_tx(index, (const uint8_t *)buf + total, size - total)) {
 			p->tx_done = true;
 			return -EIO;
 		}
@@ -418,8 +415,7 @@ static ssize_t iiod_usb_write(struct iiod_pdata *pdata, const void *buf,
 			/* A host that cancelled the stream stops reading the
 			 * data pipe, and sends the teardown on pipe 0: serve
 			 * that instead of waiting out the full timeout. */
-			if (index && ring_used(&pipes[0]) &&
-			    usb_ticks - start >= usb_stall_ticks) {
+			if (index && ring_used(&pipes[0]) && usb_ticks - start >= usb_stall_ticks) {
 				pipe_stall(index);
 				return -EPIPE;
 			}
@@ -499,8 +495,7 @@ static int usb_tick_init(const struct noos_iiod_timer *tick)
 	if (ret)
 		goto remove_irq;
 
-	ret = no_os_irq_set_priority(tick_irq, tick->irq_id,
-				     tick->irq_priority);
+	ret = no_os_irq_set_priority(tick_irq, tick->irq_id, tick->irq_priority);
 	if (ret)
 		goto remove_irq;
 
@@ -527,16 +522,16 @@ remove_timer:
 int iiod_usb_run(const struct noos_iiod_usb *usb)
 {
 	const struct iio_usb_dev_info dev_info = {
-		.vendor_id	= usb->vendor_id,
-		.product_id	= usb->product_id,
-		.release	= 0x0100,
-		.manufacturer	= usb->manufacturer,
-		.product	= usb->product,
-		.serial		= usb->serial,
-		.interface_name	= IIO_USB_IFACE_NAME,
-		.num_pipes	= IIO_USB_NUM_PIPES,
+		.vendor_id = usb->vendor_id,
+		.product_id = usb->product_id,
+		.release = 0x0100,
+		.manufacturer = usb->manufacturer,
+		.product = usb->product,
+		.serial = usb->serial,
+		.interface_name = IIO_USB_IFACE_NAME,
+		.num_pipes = IIO_USB_NUM_PIPES,
 	};
-	struct iio_context_params ctx_params = {0};
+	struct iio_context_params ctx_params = { 0 };
 	struct iio_context *ctx;
 	char *xml;
 	size_t xml_len;
@@ -594,8 +589,8 @@ int iiod_usb_run(const struct noos_iiod_usb *usb)
 
 		pr_info("USB: session started\n");
 
-		iiod_interpreter(ctx, (struct iiod_pdata *)pipes,
-				 iiod_usb_read, iiod_usb_write, xml, xml_len);
+		iiod_interpreter(ctx, (struct iiod_pdata *)pipes, iiod_usb_read, iiod_usb_write,
+				xml, xml_len);
 
 		pr_info("USB: session ended\n");
 

@@ -15,16 +15,16 @@
  */
 
 #include <errno.h>
+#include <iio/iio-backend.h>
+#include <iio/iio.h>
+#include <iio_device.h>
 #include <limits.h>
 #include <stdbool.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include <iio/iio.h>
-#include <iio/iio-backend.h>
-#include <iio_device.h>
 #include "iio_noos_driver_desc.h"
 
 /* --- attribute value helpers (noos_value_*, see iio_device.h) --- */
@@ -38,6 +38,7 @@ static ssize_t value_len(ssize_t ret, size_t len)
 	return ret < 0 ? ret : ret + 1;
 }
 
+/* 10 to the power @digits. */
 static unsigned int value_pow10(unsigned int digits)
 {
 	unsigned int p = 1;
@@ -48,18 +49,20 @@ static unsigned int value_pow10(unsigned int digits)
 	return p;
 }
 
+/* Format an integer value; see iio_device.h. */
 ssize_t noos_value_format_int(char *dst, size_t len, long long val)
 {
 	return value_len(iio_snprintf(dst, len, "%lld", val), len);
 }
 
+/* Format a string value; see iio_device.h. */
 ssize_t noos_value_format_str(char *dst, size_t len, const char *val)
 {
 	return value_len(iio_snprintf(dst, len, "%s", val), len);
 }
 
-ssize_t noos_value_format_fixed(char *dst, size_t len, int val, int val2,
-			       unsigned int digits)
+/* Format val + val2 / 10^digits as fixed point; see iio_device.h. */
+ssize_t noos_value_format_fixed(char *dst, size_t len, int val, int val2, unsigned int digits)
 {
 	long long ival = val, fval = val2;
 	bool negative = ival < 0 || fval < 0;
@@ -74,12 +77,10 @@ ssize_t noos_value_format_fixed(char *dst, size_t len, int val, int val2,
 	if (fval >= value_pow10(digits))
 		return -EINVAL;
 
-	return value_len(iio_snprintf(dst, len, "%s%lld.%0*lld",
-				      negative ? "-" : "", ival,
-				      (int)digits, fval), len);
+	return value_len(iio_snprintf(dst, len, "%s%lld.%0*lld", negative ? "-" : "", ival,
+					 (int)digits, fval),
+			len);
 }
-
-
 
 /* At the end of a written value: optionally one newline, then the NUL. */
 static bool value_end(const char *end)
@@ -90,6 +91,7 @@ static bool value_end(const char *end)
 	return *end == '\0';
 }
 
+/* Parse an integer, allowing one trailing newline; see iio_device.h. */
 int noos_value_parse_int(const char *src, long long *val)
 {
 	long long parsed;
@@ -111,8 +113,8 @@ int noos_value_parse_int(const char *src, long long *val)
 	return 0;
 }
 
-int noos_value_parse_fixed(const char *src, int *val, int *val2,
-			  unsigned int digits)
+/* Parse a fixed-point value into val and val2; see iio_device.h. */
+int noos_value_parse_fixed(const char *src, int *val, int *val2, unsigned int digits)
 {
 	long long integer = 0;
 	unsigned int mult, fract = 0;
@@ -161,8 +163,8 @@ int noos_value_parse_fixed(const char *src, int *val, int *val2,
 	return 0;
 }
 
-int noos_value_match_str(const char *const *table, size_t count,
-			const char *src, size_t len)
+/* Index of a name in a table of names; see iio_device.h. */
+int noos_value_match_str(const char *const *table, size_t count, const char *src, size_t len)
 {
 	size_t i;
 
@@ -173,20 +175,18 @@ int noos_value_match_str(const char *const *table, size_t count,
 		len--;
 
 	for (i = 0; i < count; i++) {
-		if (table[i] && strlen(table[i]) == len &&
-		    !strncmp(src, table[i], len))
+		if (table[i] && strlen(table[i]) == len && !strncmp(src, table[i], len))
 			return (int)i;
 	}
 
 	return -EINVAL;
 }
 
-
-#define TABLE_MAX_CHANNELS	32
+#define TABLE_MAX_CHANNELS 32
 
 /* Room for an id, and for a Linux attribute file name. */
-#define TABLE_ID_LEN		64
-#define TABLE_NAME_LEN		128
+#define TABLE_ID_LEN 64
+#define TABLE_NAME_LEN 128
 
 /* Linux's iio_chan_info_postfix[]. */
 static const char *const info_names[NOOS_IIO_INFO_COUNT] = {
@@ -342,15 +342,16 @@ struct dev_attr {
 	bool avail;
 };
 
-static const struct noos_iio_ext_attr *
-find_ext(const struct noos_iio_ext_attr *ext, const char *name);
+static const struct noos_iio_ext_attr *find_ext(
+		const struct noos_iio_ext_attr *ext, const char *name);
 
-static const struct noos_iio_device_info *
-table_info(const struct iio_device *iio_dev)
+/* The device info a table device registered with, from its libiio device. */
+static const struct noos_iio_device_info *table_info(const struct iio_device *iio_dev)
 {
 	return (const struct noos_iio_device_info *)iio_device_get_pdata(iio_dev);
 }
 
+/* The table entry a libiio channel was made from; see iio_device.h. */
 const struct noos_iio_chan *noos_iio_chan_of(const struct iio_channel *chn)
 {
 	return (const struct noos_iio_chan *)iio_channel_get_pdata(chn);
@@ -362,12 +363,13 @@ static uint64_t chan_mask(const struct noos_iio_chan *ch)
 	return ch->info_mask_separate | ch->info_mask_shared_by_type;
 }
 
+/* The _available mask that goes with one of the channel's info masks. */
 static uint64_t chan_avail(const struct noos_iio_chan *ch)
 {
-	return ch->info_mask_separate_available |
-	       ch->info_mask_shared_by_type_available;
+	return ch->info_mask_separate_available | ch->info_mask_shared_by_type_available;
 }
 
+/* "in" or "out", as Linux prefixes a channel's attribute files. */
 static const char *dir_prefix(const struct noos_iio_chan *ch)
 {
 	return ch->output ? "out_" : "in_";
@@ -375,8 +377,7 @@ static const char *dir_prefix(const struct noos_iio_chan *ch)
 
 /* The channel's id, as Linux names the channel: its own @id, or made from
  * what it is in @buf. NULL if it does not fit. */
-static const char *chan_id(const struct noos_iio_chan *ch, char *buf,
-			   size_t len)
+static const char *chan_id(const struct noos_iio_chan *ch, char *buf, size_t len)
 {
 	const char *type;
 	ssize_t ret;
@@ -387,14 +388,12 @@ static const char *chan_id(const struct noos_iio_chan *ch, char *buf,
 	type = type_names[ch->type];
 
 	if (ch->differential)
-		ret = iio_snprintf(buf, len, "%s%d-%s%d", type, ch->channel,
-				   type, ch->channel2);
+		ret = iio_snprintf(buf, len, "%s%d-%s%d", type, ch->channel, type, ch->channel2);
 	else if (ch->modified && ch->indexed)
 		ret = iio_snprintf(buf, len, "%s%d_%s", type, ch->channel,
-				   modifier_names[ch->channel2]);
+				modifier_names[ch->channel2]);
 	else if (ch->modified)
-		ret = iio_snprintf(buf, len, "%s_%s", type,
-				   modifier_names[ch->channel2]);
+		ret = iio_snprintf(buf, len, "%s_%s", type, modifier_names[ch->channel2]);
 	else if (ch->indexed)
 		ret = iio_snprintf(buf, len, "%s%d", type, ch->channel);
 	else
@@ -405,8 +404,7 @@ static const char *chan_id(const struct noos_iio_chan *ch, char *buf,
 
 /* Whether @name is @prefix and the name of @info, with "_available" or
  * not. */
-static bool info_name_is(const char *name, const char *prefix, int info,
-			 bool *avail)
+static bool info_name_is(const char *name, const char *prefix, int info, bool *avail)
 {
 	size_t n = strlen(prefix);
 
@@ -426,14 +424,13 @@ static bool info_name_is(const char *name, const char *prefix, int info,
 
 /* The NOOS_IIO_INFO_* @name stands for in @mask (with "_available" for
  * those in @avail_mask) after @prefix; -ENOENT if none. */
-static int find_info_in(const char *name, const char *prefix, uint64_t mask,
-			uint64_t avail_mask, bool *avail)
+static int find_info_in(const char *name, const char *prefix, uint64_t mask, uint64_t avail_mask,
+		bool *avail)
 {
 	int i;
 
 	for (i = 0; i < NOOS_IIO_INFO_COUNT; i++) {
-		if (!(mask & NOOS_IIO_INFO_BIT(i)) ||
-		    !info_name_is(name, prefix, i, avail))
+		if (!(mask & NOOS_IIO_INFO_BIT(i)) || !info_name_is(name, prefix, i, avail))
 			continue;
 
 		if (!*avail || (avail_mask & NOOS_IIO_INFO_BIT(i)))
@@ -444,8 +441,7 @@ static int find_info_in(const char *name, const char *prefix, uint64_t mask,
 }
 
 /* The standard attribute of @ch that is the channel attribute @name. */
-static int find_info(const struct noos_iio_chan *ch, const char *name,
-		     bool *avail)
+static int find_info(const struct noos_iio_chan *ch, const char *name, bool *avail)
 {
 	return find_info_in(name, "", chan_mask(ch), chan_avail(ch), avail);
 }
@@ -453,18 +449,17 @@ static int find_info(const struct noos_iio_chan *ch, const char *name,
 /* The standard attribute of @ch that is the device attribute @name: one of
  * its direction's ("in_sampling_frequency") or the device's
  * ("sampling_frequency"). */
-static int find_shared_info(const struct noos_iio_chan *ch, const char *name,
-			    bool *avail)
+static int find_shared_info(const struct noos_iio_chan *ch, const char *name, bool *avail)
 {
 	int i;
 
 	i = find_info_in(name, dir_prefix(ch), ch->info_mask_shared_by_dir,
-			 ch->info_mask_shared_by_dir_available, avail);
+			ch->info_mask_shared_by_dir_available, avail);
 	if (i >= 0)
 		return i;
 
 	return find_info_in(name, "", ch->info_mask_shared_by_all,
-			    ch->info_mask_shared_by_all_available, avail);
+			ch->info_mask_shared_by_all_available, avail);
 }
 
 /*
@@ -472,8 +467,8 @@ static int find_shared_info(const struct noos_iio_chan *ch, const char *name,
  * device's attrs. The first channel that has it serves it, as
  * table_add_channels added them.
  */
-static int find_dev_attr(const struct noos_iio_device_info *info,
-			 const char *name, struct dev_attr *da)
+static int find_dev_attr(
+		const struct noos_iio_device_info *info, const char *name, struct dev_attr *da)
 {
 	unsigned int c;
 	int i;
@@ -494,8 +489,9 @@ static int find_dev_attr(const struct noos_iio_device_info *info,
 	return da->ext ? 0 : -ENOENT;
 }
 
-static const struct noos_iio_ext_attr *
-find_ext(const struct noos_iio_ext_attr *ext, const char *name)
+/* The channel extra attribute (or device attribute) called @name. */
+static const struct noos_iio_ext_attr *find_ext(
+		const struct noos_iio_ext_attr *ext, const char *name)
 {
 	for (; ext && ext->name; ext++)
 		if (!strcmp(ext->name, name))
@@ -506,9 +502,8 @@ find_ext(const struct noos_iio_ext_attr *ext, const char *name)
 
 /* A standard attribute of a channel, with the file name Linux gives it:
  * in_accel_x_scale for its own, in_accel_scale for its type's. */
-static int add_info_attr(struct iio_channel *chn,
-			 const struct noos_iio_chan *ch, const char *id,
-			 int info, bool avail)
+static int add_info_attr(struct iio_channel *chn, const struct noos_iio_chan *ch, const char *id,
+		int info, bool avail)
 {
 	const char *suffix = avail ? avail_suffix : "";
 	/* Checked at registration for a channel without an id of its own. */
@@ -522,24 +517,22 @@ static int add_info_attr(struct iio_channel *chn,
 		return (int)ret;
 
 	if (ch->info_mask_separate & NOOS_IIO_INFO_BIT(info))
-		ret = iio_snprintf(file, sizeof(file), "%s%s_%s",
-				   dir_prefix(ch), id, name);
+		ret = iio_snprintf(file, sizeof(file), "%s%s_%s", dir_prefix(ch), id, name);
 	else if (ch->id)
-		filename = NULL;	/* its type is not known */
+		filename = NULL; /* its type is not known */
 	else if (ch->differential)
-		ret = iio_snprintf(file, sizeof(file), "%s%s-%s_%s",
-				   dir_prefix(ch), type, type, name);
+		ret = iio_snprintf(
+				file, sizeof(file), "%s%s-%s_%s", dir_prefix(ch), type, type, name);
 	else
-		ret = iio_snprintf(file, sizeof(file), "%s%s_%s",
-				   dir_prefix(ch), type, name);
+		ret = iio_snprintf(file, sizeof(file), "%s%s_%s", dir_prefix(ch), type, name);
 	if (ret < 0)
 		return (int)ret;
 
 	return iio_channel_add_attr(chn, name, IIO_ATTR_TYPE_CHANNEL, filename);
 }
 
-static int add_chan_attrs(struct iio_channel *chn,
-			  const struct noos_iio_chan *ch, const char *id)
+/* Add a channel's standard and extra attributes to its libiio channel. */
+static int add_chan_attrs(struct iio_channel *chn, const struct noos_iio_chan *ch, const char *id)
 {
 	uint64_t mask = chan_mask(ch), avail = chan_avail(ch);
 	const struct noos_iio_ext_attr *ext;
@@ -561,8 +554,7 @@ static int add_chan_attrs(struct iio_channel *chn,
 	}
 
 	for (ext = ch->ext; ext && ext->name; ext++) {
-		ret = iio_channel_add_attr(chn, ext->name, IIO_ATTR_TYPE_CHANNEL,
-					   NULL);
+		ret = iio_channel_add_attr(chn, ext->name, IIO_ATTR_TYPE_CHANNEL, NULL);
 		if (ret)
 			return ret;
 	}
@@ -581,17 +573,15 @@ static int add_dev_attr(struct iio_device *iio_dev, const char *name)
 
 /* The standard attributes @ch shares with its direction and the device:
  * device attributes "in_<name>" and "<name>". */
-static int add_shared_attrs(struct iio_device *iio_dev,
-			    const struct noos_iio_chan *ch)
+static int add_shared_attrs(struct iio_device *iio_dev, const struct noos_iio_chan *ch)
 {
 	const struct {
 		const char *prefix;
 		uint64_t mask, avail;
 	} shared[] = {
 		{ dir_prefix(ch), ch->info_mask_shared_by_dir,
-		  ch->info_mask_shared_by_dir_available },
-		{ "", ch->info_mask_shared_by_all,
-		  ch->info_mask_shared_by_all_available },
+				ch->info_mask_shared_by_dir_available },
+		{ "", ch->info_mask_shared_by_all, ch->info_mask_shared_by_all_available },
 	};
 	char name[TABLE_NAME_LEN];
 	unsigned int s;
@@ -603,8 +593,8 @@ static int add_shared_attrs(struct iio_device *iio_dev,
 			if (!(shared[s].mask & NOOS_IIO_INFO_BIT(i)))
 				continue;
 
-			ret = iio_snprintf(name, sizeof(name), "%s%s",
-					   shared[s].prefix, info_names[i]);
+			ret = iio_snprintf(name, sizeof(name), "%s%s", shared[s].prefix,
+					info_names[i]);
 			if (ret < 0)
 				return (int)ret;
 
@@ -615,9 +605,8 @@ static int add_shared_attrs(struct iio_device *iio_dev,
 			if (!(shared[s].avail & NOOS_IIO_INFO_BIT(i)))
 				continue;
 
-			ret = iio_snprintf(name, sizeof(name), "%s%s%s",
-					   shared[s].prefix, info_names[i],
-					   avail_suffix);
+			ret = iio_snprintf(name, sizeof(name), "%s%s%s", shared[s].prefix,
+					info_names[i], avail_suffix);
 			if (ret < 0)
 				return (int)ret;
 
@@ -632,15 +621,15 @@ static int add_shared_attrs(struct iio_device *iio_dev,
 
 /* The board's own byte order, for NOOS_IIO_CPU. */
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define TABLE_CPU_IS_BE		true
+#define TABLE_CPU_IS_BE true
 #else
-#define TABLE_CPU_IS_BE		false
+#define TABLE_CPU_IS_BE false
 #endif
 
 /* A Linux scan_type as libiio's format, the one clients decode with. */
 static struct iio_data_format scan_format(const struct noos_iio_scan_type *st)
 {
-	return (struct iio_data_format) {
+	return (struct iio_data_format){
 		.length = st->storagebits,
 		.bits = st->realbits,
 		.shift = st->shift,
@@ -651,6 +640,7 @@ static struct iio_data_format scan_format(const struct noos_iio_scan_type *st)
 	};
 }
 
+/* add_channels of a table device: its channels and device attributes. */
 static int table_add_channels(void *dev, struct iio_device *iio_dev)
 {
 	const struct noos_iio_device_info *info = table_info(iio_dev);
@@ -672,9 +662,8 @@ static int table_add_channels(void *dev, struct iio_device *iio_dev)
 			return -EINVAL;
 
 		fmt = scan_format(&ch->scan_type);
-		chn = iio_device_add_channel(iio_dev, ch->scan_index, id, NULL,
-					     NULL, ch->output, scan,
-					     scan ? &fmt : &none);
+		chn = iio_device_add_channel(iio_dev, ch->scan_index, id, NULL, NULL, ch->output,
+				scan, scan ? &fmt : &none);
 		if (!chn)
 			return -ENOMEM;
 
@@ -713,14 +702,12 @@ static int advance(ssize_t ret, size_t *pos)
 /* q + r / 10^9 of a 64-bit value in billionths, as Linux prints it. */
 static ssize_t format_billionths(char *dst, size_t len, int64_t v)
 {
-	return noos_value_format_fixed(dst, len, (int)(v / 1000000000),
-				      (int)(v % 1000000000), 9);
+	return noos_value_format_fixed(dst, len, (int)(v / 1000000000), (int)(v % 1000000000), 9);
 }
 
 /* A value of a NOOS_IIO_VAL_* type, from @size ints, as Linux's
  * __iio_format_value() prints it. */
-static ssize_t format_val(char *dst, size_t len, int type, int size,
-			  const int *v)
+static ssize_t format_val(char *dst, size_t len, int type, int size, const int *v)
 {
 	char c[2] = { 0, 0 };
 	size_t pos = 0;
@@ -733,13 +720,11 @@ static ssize_t format_val(char *dst, size_t len, int type, int size,
 	case NOOS_IIO_VAL_INT_PLUS_MICRO:
 		return noos_value_format_fixed(dst, len, v[0], v[1], 6);
 	case NOOS_IIO_VAL_INT_PLUS_MICRO_DB:
-		ret = advance(noos_value_format_fixed(dst, len, v[0], v[1], 6),
-			      &pos);
+		ret = advance(noos_value_format_fixed(dst, len, v[0], v[1], 6), &pos);
 		if (ret)
 			return ret;
 
-		ret = advance(noos_value_format_str(dst + pos, len - pos, " dB"),
-			      &pos);
+		ret = advance(noos_value_format_str(dst + pos, len - pos, " dB"), &pos);
 		return ret ? ret : (ssize_t)pos + 1;
 	case NOOS_IIO_VAL_INT_PLUS_NANO:
 		return noos_value_format_fixed(dst, len, v[0], v[1], 9);
@@ -747,8 +732,7 @@ static ssize_t format_val(char *dst, size_t len, int type, int size,
 		if (!v[1])
 			return -EINVAL;
 
-		return format_billionths(dst, len,
-					 (int64_t)v[0] * 1000000000 / v[1]);
+		return format_billionths(dst, len, (int64_t)v[0] * 1000000000 / v[1]);
 	case NOOS_IIO_VAL_FRACTIONAL_LOG2:
 		if (v[1] < 0 || v[1] > 62)
 			return -EINVAL;
@@ -765,12 +749,10 @@ static ssize_t format_val(char *dst, size_t len, int type, int size,
 		dst[0] = '\0';
 
 		for (i = 0; i < size; i++) {
-			ret = advance(noos_value_format_int(dst + pos, len - pos,
-							   v[i]), &pos);
+			ret = advance(noos_value_format_int(dst + pos, len - pos, v[i]), &pos);
 			if (!ret)
-				ret = advance(noos_value_format_str(dst + pos,
-								   len - pos,
-								   " "), &pos);
+				ret = advance(noos_value_format_str(dst + pos, len - pos, " "),
+						&pos);
 			if (ret)
 				return ret;
 		}
@@ -796,15 +778,13 @@ static int avail_stride(int type)
 }
 
 /* An "_available" list, "a b c", or a range, "[min step max]". */
-static ssize_t format_avail(char *dst, size_t len, int kind, int type,
-			    const int *vals, int length)
+static ssize_t format_avail(char *dst, size_t len, int kind, int type, const int *vals, int length)
 {
 	int step = avail_stride(type);
 	size_t pos = 0;
 	int i, ret;
 
-	if (length < 0 || length % step ||
-	    (kind == NOOS_IIO_AVAIL_RANGE && length != 3 * step))
+	if (length < 0 || length % step || (kind == NOOS_IIO_AVAIL_RANGE && length != 3 * step))
 		return -EINVAL;
 
 	if (kind != NOOS_IIO_AVAIL_LIST && kind != NOOS_IIO_AVAIL_RANGE)
@@ -816,23 +796,19 @@ static ssize_t format_avail(char *dst, size_t len, int kind, int type,
 	dst[0] = '\0';
 
 	for (i = 0; i < length; i += step) {
-		const char *sep = i ? " " :
-			kind == NOOS_IIO_AVAIL_RANGE ? "[" : "";
+		const char *sep = i ? " " : kind == NOOS_IIO_AVAIL_RANGE ? "[" : "";
 
-		ret = advance(noos_value_format_str(dst + pos, len - pos, sep),
-			      &pos);
+		ret = advance(noos_value_format_str(dst + pos, len - pos, sep), &pos);
 		if (ret)
 			return ret;
 
-		ret = advance(format_val(dst + pos, len - pos, type, step,
-					 &vals[i]), &pos);
+		ret = advance(format_val(dst + pos, len - pos, type, step, &vals[i]), &pos);
 		if (ret)
 			return ret;
 	}
 
 	if (kind == NOOS_IIO_AVAIL_RANGE) {
-		ret = advance(noos_value_format_str(dst + pos, len - pos, "]"),
-			      &pos);
+		ret = advance(noos_value_format_str(dst + pos, len - pos, "]"), &pos);
 		if (ret)
 			return ret;
 	}
@@ -841,23 +817,20 @@ static ssize_t format_avail(char *dst, size_t len, int kind, int type,
 }
 
 /* The value entry that serves @info on @ch, or NULL. */
-static const struct noos_iio_value *
-find_value(const struct noos_iio_device_info *info,
-	   enum noos_iio_chan_type type, int i)
+static const struct noos_iio_value *find_value(
+		const struct noos_iio_device_info *info, enum noos_iio_chan_type type, int i)
 {
 	unsigned int v;
 
 	for (v = 0; v < info->nb_values; v++)
-		if (info->values[v].chan_type == type &&
-		    (int)info->values[v].info == i)
+		if (info->values[v].chan_type == type && (int)info->values[v].info == i)
 			return &info->values[v];
 
 	return NULL;
 }
 
 /* An entry's values now, and their count. */
-static const int *value_table(const struct noos_iio_value *val, void *dev,
-			      unsigned int *nb)
+static const int *value_table(const struct noos_iio_value *val, void *dev, unsigned int *nb)
 {
 	if (val->avail)
 		return val->avail(dev, nb);
@@ -867,6 +840,7 @@ static const int *value_table(const struct noos_iio_value *val, void *dev,
 	return val->vals;
 }
 
+/* Serve a standard attribute that is a struct noos_iio_value entry. */
 static int value_read(const struct noos_iio_value *val, void *dev, int *v)
 {
 	unsigned int nb = 0, step = NOOS_IIO_VAL_STRIDE(val->type);
@@ -886,8 +860,7 @@ static int value_read(const struct noos_iio_value *val, void *dev, int *v)
 }
 
 /* Switch to the row holding @v, @v2; -EINVAL if none does. */
-static int value_write(const struct noos_iio_value *val, void *dev, int v,
-		       int v2)
+static int value_write(const struct noos_iio_value *val, void *dev, int v, int v2)
 {
 	unsigned int i, nb = 0, step = NOOS_IIO_VAL_STRIDE(val->type);
 	const int *table;
@@ -909,9 +882,9 @@ static int value_write(const struct noos_iio_value *val, void *dev, int v,
 	return -EINVAL;
 }
 
-static int read_info(const struct noos_iio_device_info *info,
-		     const struct noos_iio_chan *ch, int i, bool avail,
-		     char *dst, size_t len)
+/* Read one standard attribute: a value entry, read_avail or read_raw. */
+static int read_info(const struct noos_iio_device_info *info, const struct noos_iio_chan *ch, int i,
+		bool avail, char *dst, size_t len)
 {
 	const struct noos_iio_value *val = find_value(info, ch->type, i);
 	int v[NOOS_IIO_MAX_RAW_ELEMENTS] = { 0 };
@@ -924,9 +897,8 @@ static int read_info(const struct noos_iio_device_info *info,
 		if (!vals)
 			return -EINVAL;
 
-		return (int)format_avail(dst, len, NOOS_IIO_AVAIL_LIST,
-					 val->type, vals,
-					 (int)(NOOS_IIO_VAL_STRIDE(val->type) * nb));
+		return (int)format_avail(dst, len, NOOS_IIO_AVAIL_LIST, val->type, vals,
+				(int)(NOOS_IIO_VAL_STRIDE(val->type) * nb));
 	}
 
 	if (avail) {
@@ -943,8 +915,7 @@ static int read_info(const struct noos_iio_device_info *info,
 	if (val)
 		ret = value_read(val, info->dev, v);
 	else if (info->read_raw_multi)
-		ret = info->read_raw_multi(info->dev, ch,
-					   NOOS_IIO_MAX_RAW_ELEMENTS, v, &size, i);
+		ret = info->read_raw_multi(info->dev, ch, NOOS_IIO_MAX_RAW_ELEMENTS, v, &size, i);
 	else if (info->read_raw)
 		ret = info->read_raw(info->dev, ch, i, &v[0], &v[1]);
 	else
@@ -958,8 +929,9 @@ static int read_info(const struct noos_iio_device_info *info,
 	return (int)format_val(dst, len, ret, size, v);
 }
 
-static int table_read_attr(void *dev, const struct iio_device *iio_dev,
-			   const struct iio_attr *attr, char *dst, size_t len)
+/* read_attr of a table device: route by attribute kind and name. */
+static int table_read_attr(void *dev, const struct iio_device *iio_dev, const struct iio_attr *attr,
+		char *dst, size_t len)
 {
 	const struct noos_iio_device_info *info = table_info(iio_dev);
 	const char *name = iio_attr_get_name(attr);
@@ -977,8 +949,7 @@ static int table_read_attr(void *dev, const struct iio_device *iio_dev,
 		if (find_dev_attr(info, name, &da))
 			return -ENOENT;
 		if (!da.ext)
-			return read_info(info, da.ch, da.info, da.avail, dst,
-					 len);
+			return read_info(info, da.ch, da.info, da.avail, dst, len);
 
 		ext = da.ext;
 		break;
@@ -1075,8 +1046,9 @@ static int parse_val(const char *src, int type, int *val, int *val2)
 	}
 }
 
-static int write_info(const struct noos_iio_device_info *info,
-		      const struct noos_iio_chan *ch, int i, const char *src)
+/* Write one standard attribute: parse it, then a value entry or write_raw. */
+static int write_info(const struct noos_iio_device_info *info, const struct noos_iio_chan *ch,
+		int i, const char *src)
 {
 	const struct noos_iio_value *val = find_value(info, ch->type, i);
 	int type = NOOS_IIO_VAL_INT_PLUS_MICRO;
@@ -1109,9 +1081,9 @@ static int write_info(const struct noos_iio_device_info *info,
 	return info->write_raw(info->dev, ch, i, v, v2);
 }
 
+/* write_attr of a table device: route by attribute kind and name. */
 static int table_write_attr(void *dev, const struct iio_device *iio_dev,
-			    const struct iio_attr *attr, const char *src,
-			    size_t len)
+		const struct iio_attr *attr, const char *src, size_t len)
 {
 	const struct noos_iio_device_info *info = table_info(iio_dev);
 	const char *name = iio_attr_get_name(attr);
@@ -1167,7 +1139,7 @@ static int table_write_attr(void *dev, const struct iio_device *iio_dev,
 }
 
 struct scan_slot {
-	unsigned int idx;	/* in the device's channel table */
+	unsigned int idx; /* in the device's channel table */
 	size_t offset;
 	size_t bytes;
 	unsigned int bits;
@@ -1181,10 +1153,8 @@ struct scan_slot {
  * iio_device_get_sample_size() follows: in channel order, each element
  * aligned to its own size, channels sharing a scan index sharing it.
  */
-static int scan_layout(const struct noos_iio_device_info *info,
-		       const struct iio_device *iio_dev,
-		       const struct iio_channels_mask *mask,
-		       struct scan_slot *slots, uint32_t *enabled)
+static int scan_layout(const struct noos_iio_device_info *info, const struct iio_device *iio_dev,
+		const struct iio_channels_mask *mask, struct scan_slot *slots, uint32_t *enabled)
 {
 	unsigned int c, n = 0, nb = iio_device_get_channels_count(iio_dev);
 	long prev_index = -1;
@@ -1206,8 +1176,7 @@ static int scan_layout(const struct noos_iio_device_info *info,
 
 		fmt = iio_channel_get_data_format(chn);
 		ch = noos_iio_chan_of(chn);
-		if (!ch || fmt->repeat > 1 || !fmt->length || fmt->length % 8 ||
-		    fmt->length > 64)
+		if (!ch || fmt->repeat > 1 || !fmt->length || fmt->length % 8 || fmt->length > 64)
 			return -ENOTSUP;
 
 		length = fmt->length / 8;
@@ -1222,7 +1191,7 @@ static int scan_layout(const struct noos_iio_device_info *info,
 			offset = size - length;
 		}
 
-		slots[n] = (struct scan_slot) {
+		slots[n] = (struct scan_slot){
 			.idx = (unsigned int)(ch - info->channels),
 			.offset = offset,
 			.bytes = length,
@@ -1256,8 +1225,8 @@ static void put_value(uint8_t *dst, const struct scan_slot *slot, int64_t val)
 	u <<= slot->shift;
 
 	for (b = 0; b < slot->bytes; b++) {
-		unsigned int sh = slot->is_be ? (unsigned int)(slot->bytes - 1 - b) * 8 :
-					       (unsigned int)b * 8;
+		unsigned int sh = slot->is_be ? (unsigned int)(slot->bytes - 1 - b) * 8
+					      : (unsigned int)b * 8;
 
 		dst[slot->offset + b] = (uint8_t)(u >> sh);
 	}
@@ -1267,8 +1236,7 @@ static void put_value(uint8_t *dst, const struct scan_slot *slot, int64_t val)
  * One scan: paced by wait_scan, or else by the device's trigger, then one
  * value per enabled channel.
  */
-static int table_read_scan(const struct noos_iio_device_info *info,
-			   uint32_t enabled, int64_t *vals)
+static int table_read_scan(const struct noos_iio_device_info *info, uint32_t enabled, int64_t *vals)
 {
 	int ret = 0;
 
@@ -1282,9 +1250,9 @@ static int table_read_scan(const struct noos_iio_device_info *info,
 	return info->read_scan(info->dev, enabled, vals);
 }
 
+/* read_samples of a table device: one read_scan per scan, packed. */
 static int table_read_samples(void *dev, const struct iio_device *iio_dev,
-			      const struct iio_channels_mask *mask,
-			      void *data, size_t bytes)
+		const struct iio_channels_mask *mask, void *data, size_t bytes)
 {
 	const struct noos_iio_device_info *info = table_info(iio_dev);
 	struct scan_slot slots[TABLE_MAX_CHANNELS];
@@ -1333,19 +1301,15 @@ static bool chan_masks_valid(const struct noos_iio_chan *ch)
 	const uint64_t all = NOOS_IIO_INFO_BIT(NOOS_IIO_INFO_COUNT) - 1;
 	const uint64_t masks[][2] = {
 		{ ch->info_mask_separate, ch->info_mask_separate_available },
-		{ ch->info_mask_shared_by_type,
-		  ch->info_mask_shared_by_type_available },
-		{ ch->info_mask_shared_by_dir,
-		  ch->info_mask_shared_by_dir_available },
-		{ ch->info_mask_shared_by_all,
-		  ch->info_mask_shared_by_all_available },
+		{ ch->info_mask_shared_by_type, ch->info_mask_shared_by_type_available },
+		{ ch->info_mask_shared_by_dir, ch->info_mask_shared_by_dir_available },
+		{ ch->info_mask_shared_by_all, ch->info_mask_shared_by_all_available },
 	};
 	uint64_t seen = 0;
 	unsigned int m;
 
 	for (m = 0; m < 4; m++) {
-		if ((masks[m][0] & ~all) || (masks[m][1] & ~masks[m][0]) ||
-		    (masks[m][0] & seen))
+		if ((masks[m][0] & ~all) || (masks[m][1] & ~masks[m][0]) || (masks[m][0] & seen))
 			return false;
 
 		seen |= masks[m][0];
@@ -1364,7 +1328,7 @@ static bool chan_scan_type_valid(const struct noos_iio_chan *ch)
 		return true;
 
 	if (st->sign != NOOS_IIO_SCAN_FORMAT_SIGNED_INT &&
-	    st->sign != NOOS_IIO_SCAN_FORMAT_UNSIGNED_INT)
+			st->sign != NOOS_IIO_SCAN_FORMAT_UNSIGNED_INT)
 		return false;
 
 	if (!st->storagebits || st->storagebits % 8 || st->storagebits > 64)
@@ -1385,9 +1349,8 @@ static bool chan_spec_valid(const struct noos_iio_chan *ch)
 	if ((unsigned int)ch->type >= NOOS_IIO_CHAN_TYPE_COUNT)
 		return false;
 
-	if (ch->modified && (ch->differential ||
-			     ch->channel2 <= NOOS_IIO_NO_MOD ||
-			     ch->channel2 >= NOOS_IIO_MOD_COUNT))
+	if (ch->modified && (ch->differential || ch->channel2 <= NOOS_IIO_NO_MOD ||
+					    ch->channel2 >= NOOS_IIO_MOD_COUNT))
 		return false;
 
 	return !ch->differential || ch->indexed;
@@ -1396,16 +1359,15 @@ static bool chan_spec_valid(const struct noos_iio_chan *ch)
 /* The info bits of @ch in any of its masks, and those with a list. */
 static uint64_t chan_all_mask(const struct noos_iio_chan *ch)
 {
-	return ch->info_mask_separate | ch->info_mask_shared_by_type |
-	       ch->info_mask_shared_by_dir | ch->info_mask_shared_by_all;
+	return ch->info_mask_separate | ch->info_mask_shared_by_type | ch->info_mask_shared_by_dir |
+	       ch->info_mask_shared_by_all;
 }
 
+/* All the _available bits a channel declares, across its masks. */
 static uint64_t chan_all_avail(const struct noos_iio_chan *ch)
 {
-	return ch->info_mask_separate_available |
-	       ch->info_mask_shared_by_type_available |
-	       ch->info_mask_shared_by_dir_available |
-	       ch->info_mask_shared_by_all_available;
+	return ch->info_mask_separate_available | ch->info_mask_shared_by_type_available |
+	       ch->info_mask_shared_by_dir_available | ch->info_mask_shared_by_all_available;
 }
 
 /* The types a written value can be parsed as, to find its row. */
@@ -1425,16 +1387,15 @@ static bool value_type_writable(int type)
 
 /* A value entry is well formed, the only one of its kind, and some
  * channel has the attribute it serves. */
-static bool value_valid(const struct noos_iio_device_info *info,
-			const struct noos_iio_value *val)
+static bool value_valid(const struct noos_iio_device_info *info, const struct noos_iio_value *val)
 {
 	unsigned int c;
 
 	if ((unsigned int)val->info >= NOOS_IIO_INFO_COUNT ||
-	    (unsigned int)val->chan_type >= NOOS_IIO_CHAN_TYPE_COUNT ||
-	    (!val->vals && !val->avail) || (val->vals && !val->nb) ||
-	    val->type == NOOS_IIO_VAL_INT_MULTIPLE ||
-	    (val->set && !value_type_writable(val->type)))
+			(unsigned int)val->chan_type >= NOOS_IIO_CHAN_TYPE_COUNT ||
+			(!val->vals && !val->avail) || (val->vals && !val->nb) ||
+			val->type == NOOS_IIO_VAL_INT_MULTIPLE ||
+			(val->set && !value_type_writable(val->type)))
 		return false;
 
 	if (find_value(info, val->chan_type, (int)val->info) != val)
@@ -1442,8 +1403,7 @@ static bool value_valid(const struct noos_iio_device_info *info,
 
 	for (c = 0; c < info->num_channels; c++)
 		if (info->channels[c].type == val->chan_type &&
-		    (chan_all_mask(&info->channels[c]) &
-		     NOOS_IIO_INFO_BIT(val->info)))
+				(chan_all_mask(&info->channels[c]) & NOOS_IIO_INFO_BIT(val->info)))
 			return true;
 
 	return false;
@@ -1469,17 +1429,14 @@ static bool table_valid(const struct noos_iio_device_info *info)
 		const struct noos_iio_chan *ch = &info->channels[c];
 		uint64_t mask = chan_all_mask(ch), avail = chan_all_avail(ch);
 
-		if (!chan_masks_valid(ch) || !chan_spec_valid(ch) ||
-		    !chan_scan_type_valid(ch))
+		if (!chan_masks_valid(ch) || !chan_spec_valid(ch) || !chan_scan_type_valid(ch))
 			return false;
 
 		for (i = 0; i < NOOS_IIO_INFO_COUNT; i++) {
-			if (!(mask & NOOS_IIO_INFO_BIT(i)) ||
-			    find_value(info, ch->type, i))
+			if (!(mask & NOOS_IIO_INFO_BIT(i)) || find_value(info, ch->type, i))
 				continue;
 
-			if (!raw || ((avail & NOOS_IIO_INFO_BIT(i)) &&
-				     !info->read_avail))
+			if (!raw || ((avail & NOOS_IIO_INFO_BIT(i)) && !info->read_avail))
 				return false;
 		}
 	}
@@ -1487,6 +1444,7 @@ static bool table_valid(const struct noos_iio_device_info *info)
 	return true;
 }
 
+/* Check a table device and make its callbacks; see iio_device.h. */
 int noos_iio_table_install(struct noos_iio_device_info *info)
 {
 	if (!info->num_channels && !info->attrs)
@@ -1509,11 +1467,13 @@ int noos_iio_table_install(struct noos_iio_device_info *info)
 
 /* --- enum attributes (struct noos_iio_enum, as Linux's IIO_ENUM) --- */
 
+/* The struct noos_iio_enum an enum attribute was declared with. */
 static const struct noos_iio_enum *enum_of(intptr_t priv)
 {
 	return (const struct noos_iio_enum *)priv;
 }
 
+/* True if the hardware has item @idx of the enum (its mask, a name). */
 static bool enum_has(const struct noos_iio_enum *e, unsigned int idx)
 {
 	if (idx >= e->nb_items || !e->items[idx])
@@ -1522,8 +1482,9 @@ static bool enum_has(const struct noos_iio_enum *e, unsigned int idx)
 	return !e->mask || (idx < 32 && (e->mask & (UINT32_C(1) << idx)));
 }
 
-int noos_iio_enum_read(void *dev, const struct noos_iio_chan *ch,
-		       intptr_t priv, char *dst, size_t len)
+/* read of an enum attribute: the name of the item in use. */
+int noos_iio_enum_read(
+		void *dev, const struct noos_iio_chan *ch, intptr_t priv, char *dst, size_t len)
 {
 	const struct noos_iio_enum *e = enum_of(priv);
 	int idx;
@@ -1541,8 +1502,9 @@ int noos_iio_enum_read(void *dev, const struct noos_iio_chan *ch,
 	return (int)noos_value_format_str(dst, len, e->items[idx]);
 }
 
-int noos_iio_enum_write(void *dev, const struct noos_iio_chan *ch,
-			intptr_t priv, const char *src, size_t len)
+/* write of an enum attribute: switch to the named item. */
+int noos_iio_enum_write(void *dev, const struct noos_iio_chan *ch, intptr_t priv, const char *src,
+		size_t len)
 {
 	const struct noos_iio_enum *e = enum_of(priv);
 	int idx, ret;
@@ -1566,8 +1528,9 @@ int noos_iio_enum_write(void *dev, const struct noos_iio_chan *ch,
 	return (int)len;
 }
 
-int noos_iio_enum_available(void *dev, const struct noos_iio_chan *ch,
-			    intptr_t priv, char *dst, size_t len)
+/* read of an enum's _available attribute: the names it takes. */
+int noos_iio_enum_available(
+		void *dev, const struct noos_iio_chan *ch, intptr_t priv, char *dst, size_t len)
 {
 	const struct noos_iio_enum *e = enum_of(priv);
 	size_t pos = 0;

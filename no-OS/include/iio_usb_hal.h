@@ -11,8 +11,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define IIO_USB_MAX_PIPES	4
-#define IIO_USB_MAX_PACKET	512
+#define IIO_USB_MAX_PIPES 4
+#define IIO_USB_MAX_PACKET 512
 
 enum iio_usb_event {
 	IIO_USB_EVENT_CONNECTED,
@@ -27,14 +27,14 @@ enum iio_usb_ctrl {
 };
 
 struct iio_usb_dev_info {
-	uint16_t	vendor_id;
-	uint16_t	product_id;
-	uint16_t	release;
-	const char	*manufacturer;
-	const char	*product;
-	const char	*serial;
-	const char	*interface_name;
-	unsigned int	num_pipes;
+	uint16_t vendor_id;
+	uint16_t product_id;
+	uint16_t release;
+	const char *manufacturer;
+	const char *product;
+	const char *serial;
+	const char *interface_name;
+	unsigned int num_pipes;
 };
 
 struct iio_usb_ops {

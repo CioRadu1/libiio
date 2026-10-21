@@ -46,8 +46,7 @@ struct noos_iio_driver {
 };
 
 /* Describe a served no-OS driver for noos_iio_register_device(). */
-int noos_iio_driver_get_device_info(struct noos_iio_driver *drv,
-				    struct noos_iio_device_info *info);
+int noos_iio_driver_get_device_info(struct noos_iio_driver *drv, struct noos_iio_device_info *info);
 
 /*
  * A device-table row for a no-OS driver, with the driver's own typed init:
@@ -62,29 +61,27 @@ int noos_iio_driver_get_device_info(struct noos_iio_driver *drv,
  * The first expands, at file scope, to the driver's state and two small
  * functions; the second names them in a struct noos_iiod_device.
  */
-#define NOOS_IIOD_DRIVER_DEFINE(_id, _name, _init, _desc_type, _init_param, \
-				_descriptor, _trigger)			\
-	static struct noos_iio_driver _id##_iiod_drv = {		\
-		.name = _name,						\
-		.descriptor = _descriptor,				\
-		.trigger = _trigger,					\
-	};								\
-	static int _id##_iiod_init(const void *param)			\
-	{								\
-		_desc_type *desc;					\
-		int ret = _init(&desc, _init_param);			\
-									\
-		if (!ret)						\
-			_id##_iiod_drv.instance = desc;			\
-		return ret;						\
-	}								\
-	static int _id##_iiod_info(struct noos_iio_device_info *info)	\
-	{								\
+#define NOOS_IIOD_DRIVER_DEFINE(_id, _name, _init, _desc_type, _init_param, _descriptor, _trigger) \
+	static struct noos_iio_driver _id##_iiod_drv = { \
+		.name = _name, \
+		.descriptor = _descriptor, \
+		.trigger = _trigger, \
+	}; \
+	static int _id##_iiod_init(const void *param) \
+	{ \
+		_desc_type *desc; \
+		int ret = _init(&desc, _init_param); \
+\
+		if (!ret) \
+			_id##_iiod_drv.instance = desc; \
+		return ret; \
+	} \
+	static int _id##_iiod_info(struct noos_iio_device_info *info) \
+	{ \
 		return noos_iio_driver_get_device_info(&_id##_iiod_drv, info); \
 	}
 
-#define NOOS_IIOD_DRIVER(_id) \
-	{ .init = _id##_iiod_init, .get_info = _id##_iiod_info }
+#define NOOS_IIOD_DRIVER(_id) { .init = _id##_iiod_init, .get_info = _id##_iiod_info }
 
 struct iio_trigger;
 struct iio_hw_trig_init_param;
@@ -124,8 +121,8 @@ struct noos_iio_trigger {
 };
 
 int noos_iio_trigger_init(struct noos_iio_trigger *trig);
-int noos_iio_trigger_get_device_info(struct noos_iio_trigger *trig,
-				     struct noos_iio_device_info *info);
+int noos_iio_trigger_get_device_info(
+		struct noos_iio_trigger *trig, struct noos_iio_device_info *info);
 
 /*
  * A device-table row for a no-OS trigger, from the no-OS structs a project
@@ -139,25 +136,24 @@ int noos_iio_trigger_get_device_info(struct noos_iio_trigger *trig,
  *
  * For a software trigger pass NULL for the last four but the priority.
  */
-#define NOOS_IIOD_TRIGGER_DEFINE(_id, _name, _descriptor, _hw, _irq, _timer, \
-				 _priority)				\
-	static struct noos_iio_trigger _id##_iiod_trig = {		\
-		.name = _name,						\
-		.descriptor = _descriptor,				\
-		.hw = _hw,						\
-		.irq = _irq,						\
-		.timer = _timer,					\
-		.irq_priority = _priority,				\
-	};								\
-	static int _id##_iiod_init(const void *param)			\
-	{								\
-		return noos_iio_trigger_init(&_id##_iiod_trig);		\
-	}								\
-	static int _id##_iiod_info(struct noos_iio_device_info *info)	\
-	{								\
+#define NOOS_IIOD_TRIGGER_DEFINE(_id, _name, _descriptor, _hw, _irq, _timer, _priority) \
+	static struct noos_iio_trigger _id##_iiod_trig = { \
+		.name = _name, \
+		.descriptor = _descriptor, \
+		.hw = _hw, \
+		.irq = _irq, \
+		.timer = _timer, \
+		.irq_priority = _priority, \
+	}; \
+	static int _id##_iiod_init(const void *param) \
+	{ \
+		return noos_iio_trigger_init(&_id##_iiod_trig); \
+	} \
+	static int _id##_iiod_info(struct noos_iio_device_info *info) \
+	{ \
 		return noos_iio_trigger_get_device_info(&_id##_iiod_trig, info); \
 	}
 
-#define NOOS_IIOD_TRIGGER(_id)	NOOS_IIOD_DRIVER(_id)
+#define NOOS_IIOD_TRIGGER(_id) NOOS_IIOD_DRIVER(_id)
 
 #endif /* NOOS_IIO_DRIVER_H_ */

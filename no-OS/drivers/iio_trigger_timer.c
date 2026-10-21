@@ -5,17 +5,18 @@
  */
 
 #include <errno.h>
+#include <iio/iio-backend.h>
+#include <no_os_irq.h>
+#include <no_os_print_log.h>
+#include <no_os_timer.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
-#include <no_os_timer.h>
-#include <no_os_irq.h>
-#include <no_os_print_log.h>
-#include <iio/iio-backend.h>
-#include "noos_iiod.h"
+
 #include "iio_device.h"
 #include "iio_trigger_timer.h"
+#include "noos_iiod.h"
 
 /*
  * Timer trigger, the bare-metal counterpart of the Zephyr trigger_timer: a
@@ -92,7 +93,7 @@ int iio_trigger_timer_init(const void *param)
 	if (ret)
 		return ret;
 
-	trig.cb = (struct no_os_callback_desc) {
+	trig.cb = (struct no_os_callback_desc){
 		.callback = trigger_timer_cb,
 		.ctx = NULL,
 		.event = NO_OS_EVT_TIM_ELAPSED,
@@ -100,8 +101,7 @@ int iio_trigger_timer_init(const void *param)
 		.handle = trig.cfg->irq_handle,
 	};
 
-	ret = no_os_irq_set_priority(trig.irq, trig.cfg->irq_id,
-				     trig.cfg->irq_priority);
+	ret = no_os_irq_set_priority(trig.irq, trig.cfg->irq_id, trig.cfg->irq_priority);
 	if (ret)
 		/* The controller is shared with the other drivers: keep it. */
 		trig.irq = NULL;
@@ -206,15 +206,13 @@ int iio_trigger_timer_wait(void)
 }
 
 /* Read the trigger's sampling_frequency. */
-static int iio_trigger_timer_read_attr(void *dev,
-				       const struct iio_device *iio_dev,
-				       const struct iio_attr *attr,
-				       char *dst, size_t len)
+static int iio_trigger_timer_read_attr(void *dev, const struct iio_device *iio_dev,
+		const struct iio_attr *attr, char *dst, size_t len)
 {
 	int ret;
 
 	if (attr->type != IIO_ATTR_TYPE_DEVICE ||
-	    strcmp(iio_attr_get_name(attr), "sampling_frequency"))
+			strcmp(iio_attr_get_name(attr), "sampling_frequency"))
 		return -EINVAL;
 
 	ret = snprintf(dst, len, "%u", (unsigned int)trig.freq_hz);
@@ -228,16 +226,14 @@ static int iio_trigger_timer_read_attr(void *dev,
  * Set sampling_frequency, e.g. iio_attr -u <uri> -d timer0
  * sampling_frequency 1000.
  */
-static int iio_trigger_timer_write_attr(void *dev,
-					const struct iio_device *iio_dev,
-					const struct iio_attr *attr,
-					const char *src, size_t len)
+static int iio_trigger_timer_write_attr(void *dev, const struct iio_device *iio_dev,
+		const struct iio_attr *attr, const char *src, size_t len)
 {
 	unsigned long val;
 	char *end;
 
 	if (attr->type != IIO_ATTR_TYPE_DEVICE ||
-	    strcmp(iio_attr_get_name(attr), "sampling_frequency"))
+			strcmp(iio_attr_get_name(attr), "sampling_frequency"))
 		return -EINVAL;
 
 	if (*src < '0' || *src > '9')
@@ -259,8 +255,7 @@ static int iio_trigger_timer_write_attr(void *dev,
 /* Expose sampling_frequency on the trigger device. */
 static int iio_trigger_timer_add_attrs(void *dev, struct iio_device *iio_dev)
 {
-	return iio_device_add_attr(iio_dev, "sampling_frequency",
-				   IIO_ATTR_TYPE_DEVICE);
+	return iio_device_add_attr(iio_dev, "sampling_frequency", IIO_ATTR_TYPE_DEVICE);
 }
 
 /* Describe the timer trigger for noos_iio_register_device(). */
@@ -269,7 +264,7 @@ int iio_trigger_timer_get_device_info(struct noos_iio_device_info *info)
 	if (!info)
 		return -EINVAL;
 
-	*info = (struct noos_iio_device_info) {
+	*info = (struct noos_iio_device_info){
 		.name = IIO_TRIGGER_TIMER_NAME,
 		.add_channels = iio_trigger_timer_add_attrs,
 		.read_attr = iio_trigger_timer_read_attr,

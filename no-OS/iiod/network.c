@@ -6,17 +6,19 @@
 
 #ifdef NO_OS_LWIP_NETWORKING
 
-#include <string.h>
 #include <errno.h>
-#include <no_os_uart.h>
-#include <no_os_print_log.h>
 #include <no_os_alloc.h>
 #include <no_os_delay.h>
+#include <no_os_print_log.h>
+#include <no_os_uart.h>
+#include <stdlib.h>
+#include <string.h>
 #include <tinyiiod/tinyiiod.h>
-#include "lwip_socket.h"
-#include "tcp_socket.h"
-#include "noos_iiod.h"
+
 #include "iio_device.h"
+#include "lwip_socket.h"
+#include "noos_iiod.h"
+#include "tcp_socket.h"
 
 #define IIOD_PORT 30431
 #define NET_WRITE_TIMEOUT_S 5
@@ -40,8 +42,7 @@ struct iiod_net_pdata {
 };
 
 static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size);
-static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
-			      size_t size);
+static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf, size_t size);
 
 /* True if the lwIP socket behind sock is still connected. */
 static bool net_sock_live(const struct tcp_socket_desc *sock)
@@ -81,8 +82,7 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 		if (ret)
 			return -EIO;
 
-		ret = socket_recv(np->client, dst + total,
-				  (uint32_t)(size - total));
+		ret = socket_recv(np->client, dst + total, (uint32_t)(size - total));
 
 		if (ret > 0) {
 			total += ret;
@@ -96,8 +96,7 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 			 */
 			struct no_os_time now = no_os_get_time();
 
-			if (now.s > deadline.s ||
-			    (now.s == deadline.s && now.us >= deadline.us))
+			if (now.s > deadline.s || (now.s == deadline.s && now.us >= deadline.us))
 				return -ETIMEDOUT;
 		} else {
 			return -EIO;
@@ -108,8 +107,7 @@ static ssize_t iiod_net_read(struct iiod_pdata *pdata, void *buf, size_t size)
 }
 
 /* Send the whole reply, running lwIP while the TCP window is full. */
-static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
-			      size_t size)
+static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf, size_t size)
 {
 	struct iiod_net_pdata *np = (struct iiod_net_pdata *)pdata;
 	const uint8_t *src = (const uint8_t *)buf;
@@ -121,8 +119,7 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 	deadline.s += NET_WRITE_TIMEOUT_S;
 
 	while (total < size) {
-		ret = socket_send(np->client, src + total,
-				  (uint32_t)(size - total));
+		ret = socket_send(np->client, src + total, (uint32_t)(size - total));
 
 		if (ret > 0) {
 			total += ret;
@@ -131,8 +128,7 @@ static ssize_t iiod_net_write(struct iiod_pdata *pdata, const void *buf,
 		} else if (ret == 0) {
 			struct no_os_time now = no_os_get_time();
 
-			if (now.s > deadline.s ||
-			    (now.s == deadline.s && now.us >= deadline.us))
+			if (now.s > deadline.s || (now.s == deadline.s && now.us >= deadline.us))
 				return -ETIMEDOUT;
 
 			ret = no_os_lwip_step(np->lwip, NULL);
@@ -167,13 +163,13 @@ static void net_client_close(struct tcp_socket_desc *sock, int reason)
  */
 int iiod_network_run(struct lwip_network_desc *lwip_desc)
 {
-	struct iio_context_params ctx_params = {0};
+	struct iio_context_params ctx_params = { 0 };
 	struct tcp_socket_init_param tcp_ip = { .max_buff_size = 0 };
 	struct tcp_socket_desc *server_socket;
 	struct tcp_socket_desc *client_socket;
 	struct iiod_net_pdata np;
 	struct iio_context *ctx;
-	char *xml;
+	char *xml = NULL;
 	size_t xml_len;
 	int ret;
 
@@ -249,9 +245,8 @@ int iiod_network_run(struct lwip_network_desc *lwip_desc)
 		np.lwip = lwip_desc;
 		np.server = &g_server;
 
-		ret = iiod_interpreter(ctx, (struct iiod_pdata *)&np,
-				       iiod_net_read, iiod_net_write,
-				       xml, xml_len);
+		ret = iiod_interpreter(ctx, (struct iiod_pdata *)&np, iiod_net_read, iiod_net_write,
+				xml, xml_len);
 
 		net_client_close(client_socket, ret);
 	}
@@ -259,6 +254,7 @@ int iiod_network_run(struct lwip_network_desc *lwip_desc)
 err_server:
 	socket_remove(server_socket);
 err_ctx:
+	free(xml);
 	iio_context_destroy(ctx);
 	iiod_cleanup();
 	return ret;

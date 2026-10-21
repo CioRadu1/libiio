@@ -10,10 +10,10 @@
 struct noos_iio_device_info;
 
 /* Name of the trigger device, for noos_iio_device_info.trigger. */
-#define IIO_TRIGGER_TIMER_NAME		"timer0"
+#define IIO_TRIGGER_TIMER_NAME "timer0"
 
-#define IIO_TRIGGER_TIMER_DEFAULT_HZ	1000
-#define IIO_TRIGGER_TIMER_MAX_HZ	100000
+#define IIO_TRIGGER_TIMER_DEFAULT_HZ 1000
+#define IIO_TRIGGER_TIMER_MAX_HZ 100000
 
 /**
  * @brief Set up the trigger. The hardware timer only runs while a buffer
