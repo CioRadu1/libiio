@@ -4,47 +4,48 @@
  * SPDX-License-Identifier: MIT
  */
 
+/*
+ * Serves an ADC behind capi_adc (any driver's capi_adc_ops) as an IIO
+ * device: one input voltage<chan_id> channel per CAPI channel, with raw and,
+ * given the reference voltage, scale, in a buffer of whole scans.
+ */
+
 #ifndef CAPI_INCLUDE_IIO_CAPI_ADC_H_
 #define CAPI_INCLUDE_IIO_CAPI_ADC_H_
 
 #include <capi_adc.h>
-#include <iio_device.h>
-#include <stddef.h>
+#include <iio_capi_table.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/*
- * Any capi_adc driver as an IIO device, the CAPI counterpart of zephyr's
- * drivers/iio_device/io_channels.c. Each channel gets "raw" (one
- * capi_adc_chan_read()) and, when resolution and vref_mv are known,
- * "scale" in mV per LSB.
- *
- * What zephyr reads from the devicetree, the application gives here:
- * capi_adc has no call that returns a channel's resolution or the
- * reference voltage.
- */
-struct iio_capi_adc_channel {
-	/* IIO channel id, e.g. "voltage0" */
-	const char *id;
-	/* From capi_adc_chan_init() */
-	struct capi_adc_chan_handle *handle;
-	/* Bits per sample; 0 leaves out "scale" */
-	uint8_t resolution;
-	/* Reference voltage in mV; 0 leaves out "scale" */
-	uint16_t vref_mv;
-};
+#ifndef IIO_CAPI_ADC_MAX_CHANNELS
+#define IIO_CAPI_ADC_MAX_CHANNELS 16
+#endif
 
+/* One ADC served. Filled by iio_capi_adc_register(); keep it, the channel
+ * handles and their configurations for as long as the context exists. */
 struct iio_capi_adc {
-	const struct iio_capi_adc_channel *channels;
-	size_t num_channels;
+	struct iio_capi_table_device table;
+	struct iio_capi_chan chans[IIO_CAPI_ADC_MAX_CHANNELS];
+	struct capi_adc_chan_handle **handles;
+	const struct capi_adc_chan_config *configs;
+	uint32_t vref_mv;
 };
 
-/* Use with struct iio_capi_device: .handle = a struct iio_capi_adc *,
- * .api = &iio_capi_adc_api. */
-extern const struct iio_capi_device_api iio_capi_adc_api;
+/*
+ * Add an ADC to the context. chans are the handles capi_adc_chan_init()
+ * gave for configs, in that order: their chan_id numbers the channels and
+ * their resolution is the bits of a sample. vref_mv is the reference
+ * voltage in mV, for scale; 0 leaves scale out. Returns 0, -EINVAL for
+ * missing arguments, no channels or more than IIO_CAPI_ADC_MAX_CHANNELS, a
+ * resolution of 0 or over 32, or what iio_capi_table_register() returns.
+ */
+int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
+		struct capi_adc_chan_handle **chans, const struct capi_adc_chan_config *configs,
+		unsigned int nb_chans, uint32_t vref_mv);
 
 #ifdef __cplusplus
 }

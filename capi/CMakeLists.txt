@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Analog Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# libiio for CAPI applications, the CAPI counterpart of zephyr/CMakeLists.txt.
+# libiio for CAPI applications.
 # A CAPI application resolves libiio from its module.yml (as LIBIIO_DIR),
 # then adds this directory and links libiio::capi:
 #
@@ -9,7 +9,12 @@
 #   target_link_libraries(<app> PRIVATE libiio::capi)
 
 option(LIBIIO_CAPI_IIOD_UART "Serve IIOD over a capi_uart" ON)
-option(LIBIIO_CAPI_ADC "IIO device over any capi_adc driver" ON)
+
+# capi::core comes from capi_create_application(), which adds CAPI's core.
+if (NOT TARGET capi::core)
+    message(FATAL_ERROR "libiio/capi: add it after capi_create_application(), "
+                        "which provides capi::core.")
+endif ()
 
 get_filename_component(LIBIIO_CAPI_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
@@ -64,21 +69,21 @@ add_library(
     ${LIBIIO_CAPI_ROOT}/iiod/responder.c
     ${LIBIIO_CAPI_ROOT}/iiod-responder.c
     ${LIBIIO_CAPI_ROOT}/iiod/rw.c
-    backend.c)
+    backend.c
+    backend_table.c
+    iio_capi_adc.c)
 
 if (LIBIIO_CAPI_IIOD_UART)
     target_sources(libiio_capi PRIVATE iiod/uart.c)
 endif ()
 
-if (LIBIIO_CAPI_ADC)
-    target_sources(libiio_capi PRIVATE drivers/adc.c)
-endif ()
-
 add_library(libiio::capi ALIAS libiio_capi)
 
-target_include_directories(
-    libiio_capi PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
-                       ${LIBIIO_CAPI_ROOT}/include ${LIBIIO_CAPI_ROOT})
+# The application sees this port's headers and libiio's public ones;
+# libiio's internal headers (iio-private.h, tinyiiod/ ...) stay private.
+target_include_directories(libiio_capi PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
+                                              ${LIBIIO_CAPI_ROOT}/include)
+target_include_directories(libiio_capi PRIVATE ${LIBIIO_CAPI_ROOT})
 
 target_compile_definitions(
     libiio_capi
@@ -101,7 +106,9 @@ target_compile_definitions(
             WITH_EMU_BACKEND_DYNAMIC=0
             HAVE_DNS_SD=0
             WITH_MODULES=0
-            DEFAULT_LOG_LEVEL=4
+            # libiio's own logs go to stderr, which may be the IIOD UART:
+            # off. This port logs through CAPI_LOG.
+            DEFAULT_LOG_LEVEL=0
             LIBIIO_VERSION_MAJOR=${LIBIIO_CAPI_VERSION_MAJOR}
             LIBIIO_VERSION_MINOR=${LIBIIO_CAPI_VERSION_MINOR}
             LIBIIO_VERSION_PATCH=${LIBIIO_CAPI_VERSION_PATCH}

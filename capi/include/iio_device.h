@@ -43,17 +43,17 @@ typedef int (*iio_capi_device_write_samples_t)(const struct iio_capi_device *dev
 /* Buffer enabled or disabled by the client. */
 typedef int (*iio_capi_device_enable_buffer_t)(const struct iio_capi_device *dev, bool enable);
 
-/* Debug register access (iio_reg), as no-OS's reg_read/reg_write. */
+/* Debug register access (iio_reg, direct_reg_access). */
 typedef int (*iio_capi_device_reg_read_t)(
 		const struct iio_capi_device *dev, uint32_t reg, uint32_t *val);
 
 typedef int (*iio_capi_device_reg_write_t)(
 		const struct iio_capi_device *dev, uint32_t reg, uint32_t val);
 
-/* What zephyr's struct iio_device_driver_api is to a Zephyr device. The
- * buffer ops are optional: with read_samples the device gets an input
- * buffer, with only write_samples an output one (as in no-OS). So are the
- * register ops. */
+/* What a device does for libiio clients. add_channels is required; the
+ * others are optional. A device with the sample op of its direction
+ * (read_samples for an input one, write_samples for an output one) gets a
+ * buffer; one with reg_read gets register access. */
 struct iio_capi_device_api {
 	iio_capi_device_add_channels_t add_channels;
 	iio_capi_device_read_attr_t read_attr;
@@ -65,21 +65,29 @@ struct iio_capi_device_api {
 	iio_capi_device_reg_write_t reg_write;
 };
 
-/* One device served to libiio clients. CAPI has no device model, so the
- * application fills one of these per device and registers it; zephyr
- * builds the same list from its devicetree (struct iio_device_info). */
+/* One device served to libiio clients: a name, the part's handle and a
+ * table of callbacks. CAPI has no device model, so the application fills
+ * one of these per device and registers it before the server starts. */
 struct iio_capi_device {
 	/* IIO device name */
 	const char *name;
-	/* What api works on, e.g. a struct iio_capi_adc * for iio_capi_adc_api */
+	/* What api works on, e.g. the part's CAPI handle */
 	void *handle;
 	const struct iio_capi_device_api *api;
+	/* Its buffer is an output one (samples go to write_samples), else an
+	 * input one (samples come from read_samples) */
+	bool output;
 	/* Set by iio_capi_device_register() */
 	struct iio_capi_device *next;
+	/* Set by the backend: the register direct_reg_access reads */
+	uint32_t reg_sel;
 };
 
-/* Add a device to the context. Call before the context is created;
- * dev must stay valid for as long as the context exists. */
+/* Add a device to the context. Call before the context is created; dev
+ * must stay valid for as long as the context exists. Devices are numbered
+ * iio:device0, 1 ... in the order they are registered. Returns 0, -EINVAL
+ * without a name, an api or its add_channels, or -EEXIST for a device
+ * already registered. */
 int iio_capi_device_register(struct iio_capi_device *dev);
 
 #ifdef __cplusplus
