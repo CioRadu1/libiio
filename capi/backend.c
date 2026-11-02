@@ -4,13 +4,17 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <capi_alloc.h>
+#include <capi_log.h>
 #include <errno.h>
 #include <iio-private.h>
 #include <iio/iio-backend.h>
 #include <iio_device.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(__DATE__) && defined(__TIME__)
 #define BACKEND_VERSION(_ver) _ver " " __DATE__ " " __TIME__
@@ -40,10 +44,10 @@ static const struct iio_capi_device *capi_device_of(const struct iio_device *iio
 	return (const struct iio_capi_device *)iio_device_get_pdata(iio_device);
 }
 
-/* An output buffer for a device that can only take samples. */
-static bool capi_device_is_output(const struct iio_capi_device *dev)
+/* Whether the device has the sample op of its buffer's direction. */
+static bool capi_device_has_buffer(const struct iio_capi_device *dev)
 {
-	return dev->api->write_samples && !dev->api->read_samples;
+	return dev->output ? !!dev->api->write_samples : !!dev->api->read_samples;
 }
 
 int iio_capi_device_register(struct iio_capi_device *dev)
@@ -61,9 +65,84 @@ int iio_capi_device_register(struct iio_capi_device *dev)
 	}
 
 	dev->next = NULL;
+	dev->reg_sel = 0;
 	*tail = dev;
 
 	return 0;
+}
+
+/*
+ * direct_reg_access, the debug attribute Linux drivers have for register
+ * access: a device with reg_read gets it. Writing "<reg>" selects a
+ * register, "<reg> <value>" writes one (with reg_write); reading gives
+ * the selected register's value, in hex.
+ */
+static bool capi_is_reg_attr(const struct iio_capi_device *dev, const struct iio_attr *attr)
+{
+	return dev->api->reg_read && attr->type == IIO_ATTR_TYPE_DEBUG &&
+	       !strcmp(iio_attr_get_name(attr), "direct_reg_access");
+}
+
+static int capi_add_reg_attr(const struct iio_capi_device *dev, struct iio_device *iio_device)
+{
+	if (!dev->api->reg_read)
+		return 0;
+
+	return iio_device_add_attr(iio_device, "direct_reg_access", IIO_ATTR_TYPE_DEBUG);
+}
+
+static ssize_t capi_reg_attr_read(const struct iio_capi_device *dev, char *dst, size_t len)
+{
+	uint32_t val;
+	int ret;
+
+	ret = dev->api->reg_read(dev, dev->reg_sel, &val);
+	if (ret)
+		return ret;
+
+	ret = snprintf(dst, len, "0x%" PRIX32, val);
+	if (ret < 0 || (size_t)ret >= len)
+		return -ERANGE;
+
+	return ret + 1;
+}
+
+static ssize_t capi_reg_attr_write(struct iio_capi_device *dev, const char *src, size_t len)
+{
+	unsigned long reg, val;
+	char buf[32], *end, *next;
+	int ret;
+
+	if (len >= sizeof(buf))
+		return -EINVAL;
+
+	memcpy(buf, src, len);
+	buf[len] = '\0';
+
+	reg = strtoul(buf, &end, 0);
+	if (end == buf)
+		return -EINVAL;
+
+	val = strtoul(end, &next, 0);
+	if (next != end) {
+		if (!dev->api->reg_write)
+			return -EPERM;
+
+		ret = dev->api->reg_write(dev, (uint32_t)reg, (uint32_t)val);
+		if (ret)
+			return ret;
+
+		end = next;
+	}
+
+	while (*end == ' ' || *end == '\n')
+		end++;
+	if (*end)
+		return -EINVAL;
+
+	dev->reg_sel = (uint32_t)reg;
+
+	return (ssize_t)len;
 }
 
 static ssize_t capi_read_attr(const struct iio_attr *attr, char *dst, size_t len)
@@ -71,6 +150,9 @@ static ssize_t capi_read_attr(const struct iio_attr *attr, char *dst, size_t len
 	const struct iio_device *iio_device = iio_attr_get_device(attr);
 	const struct iio_capi_device *dev =
 			(const struct iio_capi_device *)iio_device_get_pdata(iio_device);
+
+	if (capi_is_reg_attr(dev, attr))
+		return capi_reg_attr_read(dev, dst, len);
 
 	if (!dev->api->read_attr)
 		return -ENOSYS;
@@ -81,8 +163,10 @@ static ssize_t capi_read_attr(const struct iio_attr *attr, char *dst, size_t len
 static ssize_t capi_write_attr(const struct iio_attr *attr, const char *src, size_t len)
 {
 	const struct iio_device *iio_device = iio_attr_get_device(attr);
-	const struct iio_capi_device *dev =
-			(const struct iio_capi_device *)iio_device_get_pdata(iio_device);
+	struct iio_capi_device *dev = (struct iio_capi_device *)iio_device_get_pdata(iio_device);
+
+	if (capi_is_reg_attr(dev, attr))
+		return capi_reg_attr_write(dev, src, len);
 
 	if (!dev->api->write_attr)
 		return -ENOSYS;
@@ -91,7 +175,7 @@ static ssize_t capi_write_attr(const struct iio_attr *attr, const char *src, siz
 }
 
 /*
- * The buffer and block ops below are no-OS/backend.c's: libiio opens a
+ * The buffer and block ops: libiio opens a
  * buffer, then streams through blocks, and every block transfer is done
  * synchronously by the device's read_samples/write_samples.
  */
@@ -99,7 +183,7 @@ static ssize_t capi_write_attr(const struct iio_attr *attr, const char *src, siz
 static struct iio_buffer_pdata *capi_open_buffer(
 		const struct iio_device *dev, unsigned int idx, struct iio_channels_mask *mask)
 {
-	struct iio_buffer_pdata *pdata = zalloc(sizeof(*pdata));
+	struct iio_buffer_pdata *pdata = capi_calloc(1, sizeof(*pdata));
 
 	(void)idx;
 
@@ -139,7 +223,7 @@ static void capi_close_buffer(struct iio_buffer_pdata *pdata)
 	if (pdata->enabled)
 		capi_enable_buffer(pdata, 0, false, false);
 
-	free(pdata);
+	capi_free(pdata);
 }
 
 /* Nothing to cancel: every transfer here finishes before the call returns. */
@@ -181,14 +265,14 @@ static ssize_t capi_writebuf(struct iio_buffer_pdata *pdata, const void *src, si
 static struct iio_block_pdata *capi_create_block(
 		struct iio_buffer_pdata *buf, size_t size, void **data)
 {
-	struct iio_block_pdata *pdata = zalloc(sizeof(*pdata));
+	struct iio_block_pdata *pdata = capi_calloc(1, sizeof(*pdata));
 
 	if (!pdata)
 		return iio_ptr(-ENOMEM);
 
-	pdata->data = malloc(size);
+	pdata->data = capi_malloc(size);
 	if (!pdata->data) {
-		free(pdata);
+		capi_free(pdata);
 		return iio_ptr(-ENOMEM);
 	}
 
@@ -201,8 +285,8 @@ static struct iio_block_pdata *capi_create_block(
 
 static void capi_free_block(struct iio_block_pdata *pdata)
 {
-	free(pdata->data);
-	free(pdata);
+	capi_free(pdata->data);
+	capi_free(pdata);
 }
 
 /* Do the transfer now; the result is kept for the dequeue. */
@@ -215,14 +299,15 @@ static int capi_enqueue_block(struct iio_block_pdata *pdata, size_t bytes_used, 
 
 	pdata->bytes_used = bytes_used;
 
-	if (capi_device_is_output(dev))
+	if (!capi_device_has_buffer(dev))
+		return -ENOSYS;
+
+	if (dev->output)
 		pdata->error = dev->api->write_samples(
 				dev, buf->dev, buf->mask, pdata->data, bytes_used);
-	else if (dev->api->read_samples)
+	else
 		pdata->error = dev->api->read_samples(
 				dev, buf->dev, buf->mask, pdata->data, bytes_used);
-	else
-		return -ENOSYS;
 
 	return 0;
 }
@@ -235,21 +320,21 @@ static int capi_dequeue_block(struct iio_block_pdata *pdata, bool nonblock)
 	return pdata->error;
 }
 
-/* An input or output buffer with every scan element, as no-OS does. */
+/* An input or output buffer with every scan element. */
 static int capi_add_buffer(const struct iio_capi_device *dev, struct iio_device *iio_device)
 {
 	struct iio_buffer *buf;
 	unsigned int i, nb_channels;
 	int ret;
 
-	if (!dev->api->read_samples && !dev->api->write_samples)
+	if (!capi_device_has_buffer(dev))
 		return 0;
 
 	buf = iio_device_add_buffer(iio_device, 0);
 	if (!buf)
 		return -ENOMEM;
 
-	iio_buffer_set_direction(buf, capi_device_is_output(dev) ? "out" : "in");
+	iio_buffer_set_direction(buf, dev->output ? "out" : "in");
 
 	nb_channels = iio_device_get_channels_count(iio_device);
 	for (i = 0; i < nb_channels; i++) {
@@ -266,7 +351,7 @@ static int capi_add_buffer(const struct iio_capi_device *dev, struct iio_device 
 	return 0;
 }
 
-/* Debug register access (iio_reg), forwarded to the device, as no-OS does. */
+/* Debug register access (iio_reg), forwarded to the device. */
 static int capi_reg_read(const struct iio_device *iio_device, uint32_t address, uint32_t *value)
 {
 	const struct iio_capi_device *dev = capi_device_of(iio_device);
@@ -322,18 +407,29 @@ static struct iio_context *capi_create_context(
 		iio_device = iio_context_add_device(ctx, id, dev->name, NULL);
 		if (!iio_device) {
 			ret = -ENOMEM;
+			CAPI_LOG("%s: cannot add the device\n", dev->name);
 			goto err_destroy;
 		}
 
 		iio_device_set_pdata(iio_device, (struct iio_device_pdata *)dev);
 
 		ret = dev->api->add_channels(dev, iio_device);
-		if (ret < 0)
+		if (ret < 0) {
+			CAPI_LOG("%s: add_channels failed: %d\n", dev->name, ret);
 			goto err_destroy;
+		}
 
 		ret = capi_add_buffer(dev, iio_device);
-		if (ret < 0)
+		if (ret < 0) {
+			CAPI_LOG("%s: cannot add the buffer: %d\n", dev->name, ret);
 			goto err_destroy;
+		}
+
+		ret = capi_add_reg_attr(dev, iio_device);
+		if (ret < 0) {
+			CAPI_LOG("%s: cannot add direct_reg_access: %d\n", dev->name, ret);
+			goto err_destroy;
+		}
 
 		i++;
 	}
