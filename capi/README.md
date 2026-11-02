@@ -18,15 +18,15 @@ capi-hello-world application, and a capi-noos project
 
 ## Repositories
 
-Clone each on the branch shown; the forks are private, so ask for access first.
+Clone each on the branch shown. capi-noos is private: its members can open it, others ask Aurel Miron for access.
 
 | Repository | Branch | What it brings |
 |---|---|---|
 | [adi-innersource/core-sw-common-hal](https://github.com/adi-innersource/core-sw-common-hal/tree/trim/match-minimal-capi-sdk) | `trim/match-minimal-capi-sdk` | CAPI: interfaces, dispatch, SDK cmake (`CAPI_DIR`) |
-| [Radu-rares-Ciobanu_adi/capi-maxim](https://github.com/Radu-rares-Ciobanu_adi/capi-maxim/tree/capi-libiio-max32690-adc) (fork of adi-innersource/capi-maxim) | `capi-libiio-max32690-adc` | platform backend; this branch adds interrupt-driven UART receive, which buffer captures need |
-| [Radu-rares-Ciobanu_adi/capi-noos](https://github.com/Radu-rares-Ciobanu_adi/capi-noos/tree/capi-libiio-max32690-adc) (fork of Aurel-Miron_adi/capi-noos, from `develop`) | `capi-libiio-max32690-adc` | the `max32690_adc` driver, and the `max32690-adc-iio` project |
+| [adi-innersource/capi-maxim](https://github.com/adi-innersource/capi-maxim/tree/capi-libiio-max32690-adc) | `capi-libiio-max32690-adc` | platform backend; this branch adds interrupt-driven UART receive, which buffer captures need |
+| [Aurel-Miron_adi/capi-noos](https://github.com/Aurel-Miron_adi/capi-noos/tree/capi-libiio-max32690-adc) (from `develop`) | `capi-libiio-max32690-adc` | the `max32690_adc` driver, and the `max32690-adc-iio` project |
 | [CioRadu1/libiio](https://github.com/CioRadu1/libiio/tree/capi-libiio-v2) (fork of analogdevicesinc/libiio) | `capi-libiio-v2` | `capi/`, this port; also the host tools |
-| [Radu-rares-Ciobanu_adi/capi-hello-world](https://github.com/Radu-rares-Ciobanu_adi/capi-hello-world/tree/capi-libiio-max32690-adc) (fork of adi-innersource/capi-hello-world) | `capi-libiio-max32690-adc` | the hello-world application |
+| [adi-innersource/capi-hello-world](https://github.com/adi-innersource/capi-hello-world/tree/capi-libiio-max32690-adc) | `capi-libiio-max32690-adc` | the hello-world application |
 
 Also needed: the [MaximSDK](https://www.analog.com/en/resources/evaluation-hardware-and-software/embedded-development-software/software-development-kit-sdk-maxim.html)
 (its arm-none-eabi-gcc 10.3 and OpenOCD are used), CMake >= 3.27, Ninja,
@@ -44,10 +44,10 @@ export CAPI_WORKSPACE=~/capi-ws
 mkdir -p $CAPI_WORKSPACE && cd $CAPI_WORKSPACE
 
 git clone -b trim/match-minimal-capi-sdk https://github.com/adi-innersource/core-sw-common-hal
-git clone -b capi-libiio-max32690-adc https://github.com/Radu-rares-Ciobanu_adi/capi-maxim
-git clone -b capi-libiio-max32690-adc https://github.com/Radu-rares-Ciobanu_adi/capi-noos
+git clone -b capi-libiio-max32690-adc https://github.com/adi-innersource/capi-maxim
+git clone -b capi-libiio-max32690-adc https://github.com/Aurel-Miron_adi/capi-noos
 git clone -b capi-libiio-v2 https://github.com/CioRadu1/libiio
-git clone -b capi-libiio-max32690-adc https://github.com/Radu-rares-Ciobanu_adi/capi-hello-world
+git clone -b capi-libiio-max32690-adc https://github.com/adi-innersource/capi-hello-world
 
 export CAPI_DIR=$CAPI_WORKSPACE/core-sw-common-hal
 export MAXIM_SDK_PATH=~/MaximSDK          # where the MaximSDK is installed
