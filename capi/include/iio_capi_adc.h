@@ -15,6 +15,7 @@
 
 #include <capi_adc.h>
 #include <iio_capi_table.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -25,6 +26,11 @@ extern "C" {
 #define IIO_CAPI_ADC_MAX_CHANNELS 16
 #endif
 
+/* Samples one capi_adc_stream_start() captures, over the enabled channels. */
+#ifndef IIO_CAPI_ADC_STREAM_SAMPLES
+#define IIO_CAPI_ADC_STREAM_SAMPLES 256
+#endif
+
 /* One ADC served. Filled by iio_capi_adc_register(); keep it, the channel
  * handles and their configurations for as long as the context exists. */
 struct iio_capi_adc {
@@ -33,13 +39,28 @@ struct iio_capi_adc {
 	struct capi_adc_chan_handle **handles;
 	const struct capi_adc_chan_config *configs;
 	uint32_t vref_mv;
+	/* The driver reports each channel's scale (capi_adc_chan_get_scale()). */
+	bool drv_scale;
+	/* The capture: the enabled channels, and the scans of the last
+	 * capi_adc_stream_start() not handed out yet. */
+	struct capi_adc_chan_handle *stream_chans[IIO_CAPI_ADC_MAX_CHANNELS];
+	uint32_t stream_buf[IIO_CAPI_ADC_STREAM_SAMPLES];
+	uint32_t stream_nb_chans, stream_scans, stream_pos;
+	/* The driver has no buffered capture: a scan is a capi_adc_chan_read()
+	 * of each channel. */
+	bool no_stream;
 };
 
 /*
  * Add an ADC to the context. chans are the handles capi_adc_chan_init()
  * gave for configs, in that order: their chan_id numbers the channels and
- * their resolution is the bits of a sample. vref_mv is the reference
- * voltage in mV, for scale; 0 leaves scale out. Returns 0, -EINVAL for
+ * their resolution is the bits of a sample. scale is the driver's
+ * (capi_adc_chan_get_scale()) when it reports one, else vref_mv / 2^resolution,
+ * vref_mv being the reference voltage in mV; with neither, scale is left out.
+ * offset and sampling_frequency are there when the driver reports a channel's
+ * code offset and sample rate. A capture is paced by the
+ * ADC (capi_adc_stream_start()) when the driver can, else it is a
+ * capi_adc_chan_read() of each channel per scan. Returns 0, -EINVAL for
  * missing arguments, no channels or more than IIO_CAPI_ADC_MAX_CHANNELS, a
  * resolution of 0 or over 32, or what iio_capi_table_register() returns.
  */
