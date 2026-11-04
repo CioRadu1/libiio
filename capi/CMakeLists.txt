@@ -70,11 +70,17 @@ add_library(
     ${LIBIIO_CAPI_ROOT}/iiod-responder.c
     ${LIBIIO_CAPI_ROOT}/iiod/rw.c
     backend.c
-    backend_table.c
-    iio_capi_adc.c)
+    backend_table.c)
 
 if (LIBIIO_CAPI_IIOD_UART)
     target_sources(libiio_capi PRIVATE iiod/uart.c)
+endif ()
+
+# The ADC adapter, for a CAPI whose capi_adc has the calls it serves scale,
+# offset, sampling_frequency and captures from (capi_adc_chan_get_scale() ...).
+file(STRINGS "${CAPI_DIR}/inc/capi_adc.h" _capi_adc_scale REGEX "capi_adc_chan_get_scale")
+if (_capi_adc_scale)
+    target_sources(libiio_capi PRIVATE iio_capi_adc.c)
 endif ()
 
 add_library(libiio::capi ALIAS libiio_capi)

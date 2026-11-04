@@ -16,6 +16,7 @@
 #ifndef CAPI_INCLUDE_IIO_CAPI_TABLE_H_
 #define CAPI_INCLUDE_IIO_CAPI_TABLE_H_
 
+#include <capi_value.h>
 #include <iio_device.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,6 +41,17 @@ enum iio_capi_chan_type {
 	IIO_CAPI_COUNT,
 };
 
+/* What a channel measures within its type, as IIO's modifiers name it:
+ * an axis (accel_x ...), a temperature's ambient or object. */
+enum iio_capi_chan_modifier {
+	IIO_CAPI_MOD_NONE,
+	IIO_CAPI_MOD_X,
+	IIO_CAPI_MOD_Y,
+	IIO_CAPI_MOD_Z,
+	IIO_CAPI_MOD_TEMP_AMBIENT,
+	IIO_CAPI_MOD_TEMP_OBJECT,
+};
+
 /* The values a channel can have, each an attribute of it. */
 enum iio_capi_info {
 	/* "raw": the converter's code */
@@ -52,6 +64,15 @@ enum iio_capi_info {
 	IIO_CAPI_INFO_OFFSET,
 	/* "sampling_frequency", in Hz */
 	IIO_CAPI_INFO_SAMP_FREQ,
+	/* "calibbias": the calibration offset the part applies */
+	IIO_CAPI_INFO_CALIBBIAS,
+	/* "filter_high_pass_3db_frequency", in Hz */
+	IIO_CAPI_INFO_HPF_3DB,
+	/* "oversampling_ratio": conversions averaged into a reading */
+	IIO_CAPI_INFO_OVERSAMPLING_RATIO,
+	/* "thermocouple_type": a letter, written and read as one
+	 * (IIO_CAPI_VAL_CHAR) */
+	IIO_CAPI_INFO_THERMOCOUPLE_TYPE,
 };
 
 #define IIO_CAPI_INFO_BIT(_info) (1u << (_info))
@@ -68,7 +89,13 @@ enum iio_capi_val {
 	IIO_CAPI_VAL_FRACTIONAL,
 	/* val / 2^val2 */
 	IIO_CAPI_VAL_FRACTIONAL_LOG2,
+	/* the character val */
+	IIO_CAPI_VAL_CHAR,
 };
+
+/* A driver's capi_value as read_raw gives a value: val and val2 as they
+ * are, and its enum iio_capi_val, or -EINVAL for an unknown type. */
+int iio_capi_value(const struct capi_value *value, int32_t *val, int32_t *val2);
 
 /* How a channel's sample is stored in a scan. */
 struct iio_capi_scan_format {
@@ -84,11 +111,18 @@ struct iio_capi_scan_format {
 
 struct iio_capi_chan {
 	enum iio_capi_chan_type type;
-	/* Number among the channels of its type (voltage<channel>) */
+	/* Number among the channels of its type; -1 for none. With the
+	 * modifier, the id is as IIO names a channel: <type><channel>
+	 * (voltage0), <type> (temp), <type>_<modifier> (accel_x,
+	 * temp_ambient), <type><channel>_<modifier> (temp1_object) */
 	int channel;
+	enum iio_capi_chan_modifier modifier;
 	bool output;
 	/* Its values, IIO_CAPI_INFO_BIT()s */
 	uint32_t info;
+	/* Those of them with a list of the values they take, as an
+	 * <attribute>_available attribute (IIO_CAPI_INFO_BIT()s) */
+	uint32_t info_avail;
 	/* Place in a scan, rising with the table order; -1 for a channel that
 	 * is not in scans */
 	int scan_index;
@@ -96,25 +130,55 @@ struct iio_capi_chan {
 };
 
 /*
- * What the table's device does, with dev its handle. All are optional; a
- * device with read_scan has an input buffer, one with write_scan an output
- * buffer. mask has bit n for channels[n]; values has one value per channel
- * in mask, in table order.
+ * What the table's device does, with dev its handle. read_raw, write_raw
+ * and read_avail get chan NULL for a value of the device's own (info,
+ * info_avail). All are optional; a
+ * device with read_scan or read_scans has an input buffer, one with
+ * write_scan an output buffer. mask has bit n for channels[n]; values has
+ * one value per channel in mask, in table order.
  */
 struct iio_capi_table_ops {
 	/* One value of a channel; returns its enum iio_capi_val or a negative
 	 * error code */
 	int (*read_raw)(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
 			int32_t *val, int32_t *val2);
-	/* Set one, given as val + val2 / 1000000 */
+	/* Set one, given as a CAPI_VALUE_INT_PLUS_NANO: the text written,
+	 * with up to 9 decimals; for a value that is a character, its
+	 * CAPI_VALUE_INT */
 	int (*write_raw)(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
-			int32_t val, int32_t val2);
+			const struct capi_value *value);
+	/* The values one in info_avail takes: in: the room in values; out:
+	 * how many there are */
+	int (*read_avail)(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
+			struct capi_value *values, uint32_t *nb);
 	/* Buffer on, with these channels, or off */
 	int (*enable_buffer)(void *dev, uint32_t mask, bool enable);
 	/* Read or write one scan */
 	int (*read_scan)(void *dev, uint32_t mask, int32_t *values);
 	int (*write_scan)(void *dev, uint32_t mask, const int32_t *values);
+	/* Read nb_scans consecutive scans, one after the other in values, as
+	 * the device paces them (its sampling frequency); a buffer's scans
+	 * then come from here rather than read_scan. Calls that follow each
+	 * other while the buffer is on continue the same stream. */
+	int (*read_scans)(void *dev, uint32_t mask, int32_t *values, uint32_t nb_scans);
 };
+
+/* The scan format of bits-bit samples a part's registers hold shift bits
+ * up, big-endian or not: stored in the smallest of 8, 16, 32 bits that
+ * holds them. */
+static inline struct iio_capi_scan_format iio_capi_scan_of(uint8_t bits, bool is_signed,
+		uint8_t shift, bool big_endian)
+{
+	unsigned int used = (unsigned int)bits + shift;
+
+	return (struct iio_capi_scan_format){
+		.is_signed = is_signed,
+		.bits = bits,
+		.storage = used <= 8 ? 8 : used <= 16 ? 16 : 32,
+		.shift = shift,
+		.is_big_endian = big_endian,
+	};
+}
 
 /* A table device. Fill name, dev, channels, nb_channels and ops; the rest
  * is backend_table.c's. */
@@ -125,6 +189,12 @@ struct iio_capi_table_device {
 	const struct iio_capi_chan *channels;
 	unsigned int nb_channels;
 	const struct iio_capi_table_ops *ops;
+	/* The device's own values (IIO_CAPI_INFO_BIT()s), as device
+	 * attributes: one that applies to all its channels; and those of
+	 * them with an
+	 * <attribute>_available list */
+	uint32_t info;
+	uint32_t info_avail;
 
 	struct iio_capi_device iio;
 	struct iio_capi_device_api api;
@@ -135,8 +205,8 @@ struct iio_capi_table_device {
 
 /* Add the device to the context, as iio_capi_device_register(). Returns 0,
  * -EINVAL for a table it cannot serve (no name or ops, more than 32
- * channels, scan_index not rising, an unknown type, a storage that is not
- * 8, 16 or 32 bits), or -EEXIST for a device already registered. */
+ * channels, scan_index not rising, an unknown type or modifier, a storage
+ * that is not 8, 16 or 32 bits, a shift that leaves no room for the bits), or -EEXIST for a device already registered. */
 int iio_capi_table_register(struct iio_capi_table_device *tdev);
 
 #ifdef __cplusplus
