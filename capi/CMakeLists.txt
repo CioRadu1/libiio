@@ -83,6 +83,11 @@ if (_capi_adc_scale)
     target_sources(libiio_capi PRIVATE iio_capi_adc.c)
 endif ()
 
+# The temperature sensor adapter, for a CAPI that has capi_temp.
+if (EXISTS "${CAPI_DIR}/inc/capi_temp.h")
+    target_sources(libiio_capi PRIVATE iio_capi_temp.c)
+endif ()
+
 add_library(libiio::capi ALIAS libiio_capi)
 
 # The application sees this port's headers and libiio's public ones;
