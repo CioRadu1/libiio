@@ -3,8 +3,9 @@
 `capi/` is libiio's port to [CAPI](https://github.com/adi-innersource/core-sw-common-hal):
 it serves devices behind CAPI interfaces to libiio clients (`iio_info`,
 `iio_attr`, `iio_rwdev`) over a `capi_uart`. A device driver only implements
-its CAPI interface (`capi_adc_ops` ...); a class adapter (`iio_capi_adc`)
-turns it into an IIO device, with no per-driver code.
+its CAPI interface (`capi_adc_ops`, `capi_accel_ops`, `capi_temp_ops` ...); a
+class adapter (`iio_capi_adc`, `iio_capi_accel`, `iio_capi_temp`) turns it
+into an IIO device, with no per-driver code.
 
 ```
 app main.c ──► driver (capi_adc_ops) ──► capi_adc
@@ -133,6 +134,23 @@ What a working board gives:
 reference on AIN0: 0.625 V reads about 2048 on the MAX32690, about 524 on the
 MAX32655.
 
+An accelerometer works the same way: capi-hello-world (preset
+`max32655fthr`) serves an EVAL-ADXL355-PMDZ through
+capi-noos's `adxl355` driver (`capi_accel_ops`) and `iio_capi_accel`, as the
+device `adxl355` with `accel_x`/`accel_y`/`accel_z` (`raw`, `scale` in m/s²,
+writable from its `scale_available` list to choose the range,
+`calibbias`, `sampling_frequency`, `filter_high_pass_3db_frequency`, and
+`_available` lists for the writable
+ones) and `temp` (`raw`, `scale`, `offset`: (raw + offset)
+x scale in m°C; in scans after the axes), with the scan formats
+(`be:s20/32>>4`; temp `be:u12/16>>0`, unsigned as the datasheet has
+it), the driver's temperature sensor
+(`capi_temp_ops`) given to `iio_capi_accel` with its accelerometer. Its buffer is the part's
+own samples, paced by `sampling_frequency`: a driver that streams
+(`capi_accel` `stream_enable`/`read_samples`) gives a block's scans through
+the table's `read_scans`, a block at a time; see capi-hello-world's README
+for how continuous a capture is over the UART.
+
 ## Using it in your own application
 
 ```cmake
@@ -144,6 +162,8 @@ target_link_libraries(<app> PRIVATE libiio::capi)
 /* after capi_uart_init(), capi_adc_init() and capi_adc_chan_init() */
 /* the channels' layout, scale ... are as the driver describes them */
 iio_capi_adc_register(&iio_adc, "my-adc", chan_handles, nb_chans);
+/* after capi_accel_init() and capi_temp_init(), temp_handle may be NULL */
+iio_capi_accel_register(&iio_accel, "my-accel", accel_handle, temp_handle);
 /* temperature sensors of their own, a capi_temp_init() handle each: channels
  * temp, temp<n>, temp_ambient, temp<n>_object ... as each handle's kind and
  * number say, a buffer of their raw codes, and
@@ -178,12 +198,14 @@ capi/
 ├── backend.c               # the "capi:" backend: context, attributes, buffers, registers
 ├── backend_table.c         # devices described by a channel table: ids, attributes, values, scans (one at a time, or a block's at once)
 ├── iio_capi_adc.c          # adapter: an ADC behind capi_adc as a table device
+├── iio_capi_accel.c        # adapter: an accelerometer behind capi_accel, with its capi_temp (built when CAPI has capi_accel.h)
 ├── iio_capi_temp.c         # adapter: temperature sensors behind capi_temp, a device (with a buffer) or another's channel (built when CAPI has capi_temp.h)
 └── include/
     ├── iiod_uart.h         # iiod_uart_run()
     ├── iio_device.h        # the device API backend.c serves
     ├── iio_capi_table.h    # the channel-table format
     ├── iio_capi_adc.h      # iio_capi_adc_register()
+    ├── iio_capi_accel.h    # iio_capi_accel_register()
     ├── iio_capi_temp.h     # iio_capi_temp_register()
     └── iio-config.h
 ```
