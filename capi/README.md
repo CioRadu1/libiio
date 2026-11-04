@@ -144,6 +144,13 @@ target_link_libraries(<app> PRIVATE libiio::capi)
 /* after capi_uart_init(), capi_adc_init() and capi_adc_chan_init() */
 /* the channels' layout, scale ... are as the driver describes them */
 iio_capi_adc_register(&iio_adc, "my-adc", chan_handles, nb_chans);
+/* temperature sensors of their own, a capi_temp_init() handle each: channels
+ * temp, temp<n>, temp_ambient, temp<n>_object ... as each handle's kind and
+ * number say, a buffer of their raw codes, and
+ * thermocouple_type and oversampling_ratio (with its list) when the driver
+ * has them */
+struct capi_temp_handle *temps[] = { ambient_handle, object_handle };
+iio_capi_temp_register(&iio_temp, "my-temp", temps, 2);
 return iiod_uart_run(uart, NULL);   /* the app's UARTn_IRQHandler calls capi_uart_isr(uart) */
 ```
 
@@ -171,11 +178,13 @@ capi/
 ├── backend.c               # the "capi:" backend: context, attributes, buffers, registers
 ├── backend_table.c         # devices described by a channel table: ids, attributes, values, scans (one at a time, or a block's at once)
 ├── iio_capi_adc.c          # adapter: an ADC behind capi_adc as a table device
+├── iio_capi_temp.c         # adapter: temperature sensors behind capi_temp, a device (with a buffer) or another's channel (built when CAPI has capi_temp.h)
 └── include/
     ├── iiod_uart.h         # iiod_uart_run()
     ├── iio_device.h        # the device API backend.c serves
     ├── iio_capi_table.h    # the channel-table format
     ├── iio_capi_adc.h      # iio_capi_adc_register()
+    ├── iio_capi_temp.h     # iio_capi_temp_register()
     └── iio-config.h
 ```
 
