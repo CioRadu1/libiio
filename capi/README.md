@@ -24,7 +24,7 @@ Clone each on the branch shown. capi-noos is private: its members can open it, o
 
 | Repository | Branch | What it brings |
 |---|---|---|
-| [adi-innersource/core-sw-common-hal](https://github.com/adi-innersource/core-sw-common-hal/tree/trim/match-minimal-capi-sdk) | `trim/match-minimal-capi-sdk` | CAPI: interfaces, dispatch, SDK cmake (`CAPI_DIR`) |
+| [Ramona-Gradinariu_adi/core-sw-common-hal](https://github.com/Ramona-Gradinariu_adi/core-sw-common-hal/tree/feature/LIBIIOCHAL-5-libiio-support) (fork of adi-innersource/core-sw-common-hal) | `feature/LIBIIOCHAL-5-libiio-support` | CAPI: interfaces, dispatch, SDK cmake (`CAPI_DIR`); this branch adds `capi_value`, `capi_accel`, `capi_temp` and the `capi_adc` the drivers here use, until it is merged into adi-innersource/core-sw-common-hal |
 | [adi-innersource/capi-maxim](https://github.com/adi-innersource/capi-maxim/tree/capi-libiio-max32690-adc) | `capi-libiio-max32690-adc` | platform backend; this branch adds interrupt-driven UART receive, which buffer captures need |
 | [Aurel-Miron_adi/capi-noos](https://github.com/Aurel-Miron_adi/capi-noos/tree/capi-libiio-max32690-adc) (from `develop`) | `capi-libiio-max32690-adc` | the `max32690_adc` and `max32655_adc` drivers, and the `max32690-adc-iio` and `max32655-adc-iio` projects |
 | [CioRadu1/libiio](https://github.com/CioRadu1/libiio/tree/capi-libiio-v2) (fork of analogdevicesinc/libiio) | `capi-libiio-v2` | `capi/`, this port; also the host tools |
@@ -45,7 +45,7 @@ dependencies there.
 export CAPI_WORKSPACE=~/capi-ws
 mkdir -p $CAPI_WORKSPACE && cd $CAPI_WORKSPACE
 
-git clone -b trim/match-minimal-capi-sdk https://github.com/adi-innersource/core-sw-common-hal
+git clone -b feature/LIBIIOCHAL-5-libiio-support https://github.com/Ramona-Gradinariu_adi/core-sw-common-hal
 git clone -b capi-libiio-max32690-adc https://github.com/adi-innersource/capi-maxim
 git clone -b capi-libiio-max32690-adc https://github.com/Aurel-Miron_adi/capi-noos
 git clone -b capi-libiio-v2 https://github.com/CioRadu1/libiio
