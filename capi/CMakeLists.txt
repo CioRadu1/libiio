@@ -83,6 +83,10 @@ if (_capi_adc_scale)
     target_sources(libiio_capi PRIVATE iio_capi_adc.c)
 endif ()
 
+if (EXISTS "${CAPI_DIR}/inc/capi_dac.h")
+    target_sources(libiio_capi PRIVATE iio_capi_dac.c)
+endif ()
+
 # The temperature sensor adapter, for a CAPI that has capi_temp, and the
 # accelerometer one, which serves the part's temperature sensor too, for one
 # that also has capi_accel.

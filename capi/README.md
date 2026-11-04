@@ -3,8 +3,9 @@
 `capi/` is libiio's port to [CAPI](https://github.com/adi-innersource/core-sw-common-hal):
 it serves devices behind CAPI interfaces to libiio clients (`iio_info`,
 `iio_attr`, `iio_rwdev`) over a `capi_uart`. A device driver only implements
-its CAPI interface (`capi_adc_ops`, `capi_accel_ops`, `capi_temp_ops` ...); a
-class adapter (`iio_capi_adc`, `iio_capi_accel`, `iio_capi_temp`) turns it
+its CAPI interface (`capi_adc_ops`, `capi_dac_ops`, `capi_accel_ops`,
+`capi_temp_ops` ...); a class adapter (`iio_capi_adc`, `iio_capi_dac`,
+`iio_capi_accel`, `iio_capi_temp`) turns it
 into an IIO device, with no per-driver code.
 
 ```
@@ -18,6 +19,10 @@ The worked example serves the MCU's own ADC on an AD-APARD32690-SL
 that builds for both boards, and a capi-noos project per board
 (`projects/max32690-adc-iio`, `projects/max32655-adc-iio`).
 
+To try it with nothing attached to the board, capi-noos's `projects/iio_demo`
+serves `adc_demo` (a sine) and `dac_demo`: software-only devices behind
+`capi_adc_ops` / `capi_dac_ops`, on either board.
+
 ## Repositories
 
 Clone each on the branch shown. capi-noos is private: its members can open it, others ask Aurel Miron for access.
@@ -26,7 +31,7 @@ Clone each on the branch shown. capi-noos is private: its members can open it, o
 |---|---|---|
 | [Ramona-Gradinariu_adi/core-sw-common-hal](https://github.com/Ramona-Gradinariu_adi/core-sw-common-hal/tree/feature/LIBIIOCHAL-5-libiio-support) (fork of adi-innersource/core-sw-common-hal) | `feature/LIBIIOCHAL-5-libiio-support` | CAPI: interfaces, dispatch, SDK cmake (`CAPI_DIR`); this branch adds `capi_value`, `capi_accel`, `capi_temp` and the `capi_adc` the drivers here use, until it is merged into adi-innersource/core-sw-common-hal |
 | [adi-innersource/capi-maxim](https://github.com/adi-innersource/capi-maxim/tree/capi-libiio-max32690-adc) | `capi-libiio-max32690-adc` | platform backend; this branch adds interrupt-driven UART receive, which buffer captures need |
-| [Aurel-Miron_adi/capi-noos](https://github.com/Aurel-Miron_adi/capi-noos/tree/capi-libiio-max32690-adc) (from `develop`) | `capi-libiio-max32690-adc` | the `max32690_adc` and `max32655_adc` drivers, and the `max32690-adc-iio` and `max32655-adc-iio` projects |
+| [Aurel-Miron_adi/capi-noos](https://github.com/Aurel-Miron_adi/capi-noos/tree/capi-libiio-max32690-adc) (from `develop`) | `capi-libiio-max32690-adc` | the `max32690_adc` and `max32655_adc` drivers, and the `max32690-adc-iio`, `max32655-adc-iio` and `iio_demo` projects |
 | [CioRadu1/libiio](https://github.com/CioRadu1/libiio/tree/capi-libiio-v2) (fork of analogdevicesinc/libiio) | `capi-libiio-v2` | `capi/`, this port; also the host tools |
 | [adi-innersource/capi-hello-world](https://github.com/adi-innersource/capi-hello-world/tree/capi-libiio-max32690-adc) | `capi-libiio-max32690-adc` | the hello-world application |
 
@@ -99,6 +104,17 @@ or the capi-noos project, with the same three commands in
 `$CAPI_WORKSPACE/capi-noos/projects/max32690-adc-iio` (preset `apard32690`)
 or `projects/max32655-adc-iio` (preset `max32655fthr`).
 
+The demo, `adc_demo` and `dac_demo` (no hardware on the board needed), the
+same way in `$CAPI_WORKSPACE/capi-noos/projects/iio_demo`, preset
+`max32655fthr` or `apard32690`:
+
+```bash
+cd $CAPI_WORKSPACE/capi-noos/projects/iio_demo
+cmake --preset max32655fthr --fresh    # or: cmake --preset apard32690 --fresh
+cmake --build build-uart
+cmake --build build-uart --target flash
+```
+
 Both hello-world presets build in `build-uart`: to switch boards, configure
 with `--fresh`. `Verified OK` ends a good flash. If `/dev/ttyACM0` is gone afterwards
 (WSL), run the `attach` again.
@@ -119,20 +135,23 @@ python3 -c "import struct;b=open('cap.bin','rb').read();v=struct.unpack('<%dH'%(
 iio_reg -u $U $DEV 0
 ```
 
-What a working board gives:
-
-| Command | AD-APARD32690-SL | MAX32655FTHR |
-|---|---|---|
-| `iio_info` | device `max32690-adc` (buffer capable): `voltage0`..`voltage3`, `format: le:u12/16>>0`, each with `raw` and `scale`; `buffer0: (input)` with 4 scan elements | device `max32655-adc`, the same with `format: le:u10/16>>0` |
-| `iio_attr ... raw` | a code 0..4095 | a code 0..1023 |
-| `iio_attr ... scale` | `0.305175781` (1250 mV / 2^12) | `1.191406250` (1220 mV / 2^10) |
-| `iio_attr ... raw 5` | refused: `Operation not permitted` | same |
-| `iio_rwdev` | `cap.bin` of 16384 bytes (4096 scans x 2 channels x 2 bytes) | same, every value <= 1023 |
-| `iio_reg` | refused: `No such file or directory` (the driver has no registers) | same |
-
 `raw x scale` is the input in mV. To check a real voltage, put 0 V up to the
 reference on AIN0: 0.625 V reads about 2048 on the MAX32690, about 524 on the
 MAX32655.
+
+With `iio_demo` flashed:
+
+```bash
+iio_info -u $U
+iio_attr -u $U -c adc_demo voltage0 raw
+iio_attr -u $U -c dac_demo voltage0 raw 1234
+iio_attr -u $U -c dac_demo voltage0 raw
+iio_rwdev -u $U -b 256 -s 4096 adc_demo voltage0 voltage1 > sine.bin
+python3 -c "import struct;b=open('sine.bin','rb').read();v=struct.unpack('<%dh'%(len(b)//2),b);print(len(v),'samples, min',min(v),'max',max(v))"
+python3 -c "import struct;open('tx.bin','wb').write(b''.join(struct.pack('<HH',i,4095-i) for i in range(1024)))"
+iio_rwdev -u $U -w -b 256 -s 1024 dac_demo voltage0 voltage1 < tx.bin
+iio_attr -u $U -c dac_demo voltage1 raw
+```
 
 An accelerometer works the same way: capi-hello-world (preset
 `max32655fthr`) serves an EVAL-ADXL355-PMDZ through
@@ -151,44 +170,6 @@ own samples, paced by `sampling_frequency`: a driver that streams
 the table's `read_scans`, a block at a time; see capi-hello-world's README
 for how continuous a capture is over the UART.
 
-## Using it in your own application
-
-```cmake
-add_subdirectory("${LIBIIO_DIR}/capi" "${CMAKE_BINARY_DIR}/libiio")
-target_link_libraries(<app> PRIVATE libiio::capi)
-```
-
-```c
-/* after capi_uart_init(), capi_adc_init() and capi_adc_chan_init() */
-/* the channels' layout, scale ... are as the driver describes them */
-iio_capi_adc_register(&iio_adc, "my-adc", chan_handles, nb_chans);
-/* after capi_accel_init() and capi_temp_init(), temp_handle may be NULL */
-iio_capi_accel_register(&iio_accel, "my-accel", accel_handle, temp_handle);
-/* temperature sensors of their own, a capi_temp_init() handle each: channels
- * temp, temp<n>, temp_ambient, temp<n>_object ... as each handle's kind and
- * number say, a buffer of their raw codes, and
- * thermocouple_type and oversampling_ratio (with its list) when the driver
- * has them */
-struct capi_temp_handle *temps[] = { ambient_handle, object_handle };
-iio_capi_temp_register(&iio_temp, "my-temp", temps, 2);
-return iiod_uart_run(uart, NULL);   /* the app's UARTn_IRQHandler calls capi_uart_isr(uart) */
-```
-
-## Troubleshooting
-
-- **`CAPI_DIR not set`**: the `export`s of step 1 are missing in this shell.
-- **No `/dev/ttyACM0`**: attach it again (step 3); its bus id can change.
-- **A client hangs after another was killed mid-capture** (Ctrl-C on a
-  running `iio_rwdev`): the debugger's USB-UART bridge, not the firmware,
-  stops passing data; unplug and plug the board back in.
-- **A capture sometimes stops early with `Connection timed out` (WSL)**: WSL2
-  steps the PC's wall clock back now and then (about 0.76 s every ~30 s), and
-  libiio's host side times its waits with that clock. Not the board: run it
-  again, or pass `-T -1` (no timeout) to `iio_rwdev`.
-- **Captures stop at the 5th block with "Invalid argument"**: the build used
-  a capi-maxim without the interrupt-driven UART receive; check that
-  `$CAPI_WORKSPACE/capi-maxim` is on `capi-libiio-max32690-adc`.
-
 ## Directory structure
 
 ```
@@ -198,6 +179,7 @@ capi/
 ├── backend.c               # the "capi:" backend: context, attributes, buffers, registers
 ├── backend_table.c         # devices described by a channel table: ids, attributes, values, scans (one at a time, or a block's at once)
 ├── iio_capi_adc.c          # adapter: an ADC behind capi_adc as a table device
+├── iio_capi_dac.c          # adapter: a DAC behind capi_dac as a table device: raw writes, an output buffer
 ├── iio_capi_accel.c        # adapter: an accelerometer behind capi_accel, with its capi_temp (built when CAPI has capi_accel.h)
 ├── iio_capi_temp.c         # adapter: temperature sensors behind capi_temp, a device (with a buffer) or another's channel (built when CAPI has capi_temp.h)
 └── include/
@@ -205,6 +187,7 @@ capi/
     ├── iio_device.h        # the device API backend.c serves
     ├── iio_capi_table.h    # the channel-table format
     ├── iio_capi_adc.h      # iio_capi_adc_register()
+    ├── iio_capi_dac.h      # iio_capi_dac_register()
     ├── iio_capi_accel.h    # iio_capi_accel_register()
     ├── iio_capi_temp.h     # iio_capi_temp_register()
     └── iio-config.h
