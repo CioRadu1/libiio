@@ -6,8 +6,8 @@
 
 /*
  * An ADC behind capi_adc as a table device: the table has its channels, the
- * values come from capi_adc_chan_read(), and a capture from
- * capi_adc_stream_start() when the driver has it.
+ * values come from capi_adc_chan_read() and the other capi_adc calls, and a
+ * capture from the driver's stream (capi_adc_read_samples()) when it has one.
  */
 
 #include <capi_adc.h>
@@ -22,6 +22,18 @@ static unsigned int adc_chan_index(const struct iio_capi_adc *adc, const struct 
 	return (unsigned int)(chan - adc->chans);
 }
 
+/* A code as the driver gives it (capi_adc_chan_read(), a stream's buffer),
+ * sign extended when the channel's codes are signed. */
+static int32_t adc_code(const struct capi_adc_chan_handle *h, uint32_t raw)
+{
+	unsigned int bits = h->resolution;
+
+	if (!h->is_signed || bits >= 32)
+		return (int32_t)raw;
+
+	return (int32_t)(raw << (32 - bits)) >> (32 - bits);
+}
+
 static int adc_read(const struct iio_capi_adc *adc, unsigned int i, int32_t *val)
 {
 	/* What capi_adc_chan_read() implementations write. */
@@ -32,162 +44,82 @@ static int adc_read(const struct iio_capi_adc *adc, unsigned int i, int32_t *val
 	if (ret)
 		return ret;
 
-	*val = (int32_t)raw;
+	*val = adc_code(adc->handles[i], raw);
 
 	return 0;
-}
-
-/* A driver's capi_value as read_raw returns it. */
-static int adc_value(const struct capi_value *v, int32_t *val, int32_t *val2)
-{
-	*val = v->val;
-	*val2 = v->val2;
-
-	switch (v->type) {
-	case CAPI_VAL_INT:
-		return IIO_CAPI_VAL_INT;
-	case CAPI_VAL_INT_PLUS_MICRO:
-		return IIO_CAPI_VAL_INT_PLUS_MICRO;
-	case CAPI_VAL_INT_PLUS_NANO:
-		return IIO_CAPI_VAL_INT_PLUS_NANO;
-	case CAPI_VAL_FRACTIONAL:
-		return IIO_CAPI_VAL_FRACTIONAL;
-	case CAPI_VAL_FRACTIONAL_LOG2:
-		return IIO_CAPI_VAL_FRACTIONAL_LOG2;
-	default:
-		return -EINVAL;
-	}
 }
 
 static int adc_read_raw(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
 		int32_t *val, int32_t *val2)
 {
 	const struct iio_capi_adc *adc = dev;
-	unsigned int i = adc_chan_index(adc, chan);
+	struct capi_adc_chan_handle *h = adc->handles[adc_chan_index(adc, chan)];
 	struct capi_value v;
 	int ret;
 
 	switch (info) {
 	case IIO_CAPI_INFO_RAW:
-		ret = adc_read(adc, i, val);
+		ret = adc_read(adc, adc_chan_index(adc, chan), val);
 		return ret ? ret : IIO_CAPI_VAL_INT;
 	case IIO_CAPI_INFO_SCALE:
-		if (adc->drv_scale) {
-			ret = capi_adc_chan_get_scale(adc->handles[i], &v);
-			return ret ? ret : adc_value(&v, val, val2);
-		}
-
-		/* mV per code, as Linux gives it: vref / 2^resolution */
-		*val = (int32_t)adc->vref_mv;
-		*val2 = adc->configs[i].resolution;
-		return IIO_CAPI_VAL_FRACTIONAL_LOG2;
+		/* mV per code, as the driver states it */
+		ret = capi_adc_chan_get_scale(h, &v);
+		break;
 	case IIO_CAPI_INFO_OFFSET:
-		ret = capi_adc_chan_get_code_offset(adc->handles[i], &v);
-		return ret ? ret : adc_value(&v, val, val2);
-	case IIO_CAPI_INFO_SAMP_FREQ: {
-		uint32_t hz;
-
-		ret = capi_adc_chan_get_samples_hz(adc->handles[i], &hz);
-		if (ret)
-			return ret;
-
-		*val = (int32_t)hz;
-		return IIO_CAPI_VAL_INT;
+		ret = capi_adc_chan_get_code_offset(h, &v);
+		break;
+	case IIO_CAPI_INFO_SAMP_FREQ:
+		/* Hz, as the driver states it */
+		ret = capi_adc_chan_get_samples_hz(h, &v);
+		break;
+	default:
+		return -EINVAL;
 	}
+
+	return ret ? ret : iio_capi_value(&v, val, val2);
+}
+
+/* A value the driver has no setter for is read-only. */
+static int adc_write_raw(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
+		const struct capi_value *value)
+{
+	const struct iio_capi_adc *adc = dev;
+	struct capi_adc_chan_handle *h = adc->handles[adc_chan_index(adc, chan)];
+	const struct capi_adc_ops *ops = h->adc_handle->adc_ops;
+
+	switch (info) {
+	case IIO_CAPI_INFO_SAMP_FREQ:
+		return ops->chan_set_samples_hz ? capi_adc_chan_set_samples_hz(h, value) : -EPERM;
+	case IIO_CAPI_INFO_SCALE:
+		return ops->chan_set_scale ? capi_adc_chan_set_scale(h, value) : -EPERM;
+	default:
+		return -EPERM;
+	}
+}
+
+static int adc_read_avail(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
+		struct capi_value *values, uint32_t *nb)
+{
+	const struct iio_capi_adc *adc = dev;
+	struct capi_adc_chan_handle *h = adc->handles[adc_chan_index(adc, chan)];
+
+	switch (info) {
+	case IIO_CAPI_INFO_SCALE:
+		return capi_adc_chan_get_scale_available(h, values, nb);
+	case IIO_CAPI_INFO_SAMP_FREQ:
+		return capi_adc_chan_get_samples_hz_available(h, values, nb);
 	default:
 		return -EINVAL;
 	}
 }
 
-static int adc_write_raw(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
-		int32_t val, int32_t val2)
-{
-	struct iio_capi_adc *adc = dev;
-	int ret;
-
-	(void)val2;
-
-	/* Only the sample rate is writable, as before there was write_raw. */
-	if (info != IIO_CAPI_INFO_SAMP_FREQ)
-		return -EPERM;
-	if (val <= 0)
-		return -EINVAL;
-
-	ret = capi_adc_chan_set_samples_hz(adc->handles[adc_chan_index(adc, chan)], (uint32_t)val);
-	if (ret)
-		return ret;
-
-	/* What is left of the last capture was taken at the old rate. */
-	adc->stream_scans = 0;
-
-	return 0;
-}
-
-static int adc_enable_buffer(void *dev, uint32_t mask, bool enable)
-{
-	struct iio_capi_adc *adc = dev;
-	unsigned int i;
-
-	adc->stream_nb_chans = 0;
-	adc->stream_scans = 0;
-	adc->stream_pos = 0;
-
-	if (!enable)
-		return 0;
-
-	for (i = 0; i < adc->table.nb_channels; i++)
-		if (mask & (1u << i))
-			adc->stream_chans[adc->stream_nb_chans++] = adc->handles[i];
-
-	return 0;
-}
-
-/* One scan from the capture, starting the next one when the last is used up. */
-static int adc_stream_scan(struct iio_capi_adc *adc, int32_t *values)
-{
-	const uint32_t *scan;
-	unsigned int k;
-	int ret;
-
-	if (!adc->stream_nb_chans)
-		return -EINVAL;
-
-	if (adc->stream_pos >= adc->stream_scans) {
-		struct capi_adc_stream_config config = {
-			.chans = adc->stream_chans,
-			.nb_chans = adc->stream_nb_chans,
-			.buffer = adc->stream_buf,
-			.nb_scans = IIO_CAPI_ADC_STREAM_SAMPLES / adc->stream_nb_chans,
-		};
-
-		ret = capi_adc_stream_start(adc->stream_chans[0]->adc_handle, &config);
-		if (ret)
-			return ret;
-
-		adc->stream_scans = config.nb_scans;
-		adc->stream_pos = 0;
-	}
-
-	scan = &adc->stream_buf[adc->stream_pos++ * adc->stream_nb_chans];
-	for (k = 0; k < adc->stream_nb_chans; k++)
-		values[k] = (int32_t)scan[k];
-
-	return 0;
-}
-
+/* A scan without a stream: a capi_adc_chan_read() of each channel in mask,
+ * as fast as the buffer asks. */
 static int adc_read_scan(void *dev, uint32_t mask, int32_t *values)
 {
 	struct iio_capi_adc *adc = dev;
 	unsigned int i, k = 0;
 	int ret;
-
-	if (!adc->no_stream) {
-		ret = adc_stream_scan(adc, values);
-		if (ret != -ENOSYS)
-			return ret;
-
-		adc->no_stream = true;
-	}
 
 	for (i = 0; i < adc->table.nb_channels; i++) {
 		if (!(mask & (1u << i)))
@@ -201,66 +133,132 @@ static int adc_read_scan(void *dev, uint32_t mask, int32_t *values)
 	return 0;
 }
 
-static const struct iio_capi_table_ops adc_ops = {
-	.read_raw = adc_read_raw,
-	.write_raw = adc_write_raw,
-	.enable_buffer = adc_enable_buffer,
-	.read_scan = adc_read_scan,
-};
+/* The stream of the channels in mask, in table order: the order of a
+ * scan's values. */
+static int adc_stream_enable(struct iio_capi_adc *adc, uint32_t mask)
+{
+	unsigned int i;
+
+	adc->stream_nb_chans = 0;
+	for (i = 0; i < adc->table.nb_channels; i++)
+		if (mask & (1u << i))
+			adc->stream_chans[adc->stream_nb_chans++] = adc->handles[i];
+
+	return capi_adc_stream_enable(adc->handles[0]->adc_handle, adc->stream_chans,
+			adc->stream_nb_chans);
+}
+
+static int adc_enable_buffer(void *dev, uint32_t mask, bool enable)
+{
+	struct iio_capi_adc *adc = dev;
+
+	return enable ? adc_stream_enable(adc, mask) :
+			capi_adc_stream_disable(adc->handles[0]->adc_handle);
+}
+
+/* nb_scans scans of the stream, its codes as the channels lay them out. */
+static int adc_read_stream(struct iio_capi_adc *adc, int32_t *values, uint32_t nb_scans)
+{
+	uint32_t i, n = nb_scans * adc->stream_nb_chans;
+	int ret;
+
+	/* The codes land in values, then are sign extended in place. */
+	ret = capi_adc_read_samples(adc->handles[0]->adc_handle, (uint32_t *)values, nb_scans);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < n; i++)
+		values[i] = adc_code(adc->stream_chans[i % adc->stream_nb_chans],
+				(uint32_t)values[i]);
+
+	return 0;
+}
+
+static int adc_read_scans(void *dev, uint32_t mask, int32_t *values, uint32_t nb_scans)
+{
+	struct iio_capi_adc *adc = dev;
+	int ret;
+
+	ret = adc_read_stream(adc, values, nb_scans);
+	if (ret != -EOVERFLOW)
+		return ret;
+
+	/* Scans were lost, mostly while the previous block was being sent:
+	 * these start a new stream. Lost again, the ADC is faster than it can
+	 * be read. */
+	ret = adc_stream_enable(adc, mask);
+	if (ret)
+		return ret;
+
+	return adc_read_stream(adc, values, nb_scans);
+}
 
 int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, const struct capi_adc_chan_config *configs,
-		unsigned int nb_chans, uint32_t vref_mv)
+		struct capi_adc_chan_handle **chans, unsigned int nb_chans)
 {
-	uint32_t info = IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_RAW);
-	struct capi_value v;
+	uint32_t info = IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_RAW), avail = 0;
+	const struct capi_adc_ops *ops;
 	unsigned int i;
-	uint32_t hz;
 
-	if (!adc || !name || !chans || !configs || !nb_chans ||
-			nb_chans > IIO_CAPI_ADC_MAX_CHANNELS || !chans[0])
+	if (!adc || !name || !chans || !nb_chans || nb_chans > IIO_CAPI_ADC_MAX_CHANNELS ||
+			!chans[0] || !chans[0]->adc_handle || !chans[0]->adc_handle->adc_ops)
 		return -EINVAL;
 
-	/* The driver's own scale when it reports one, else vref / 2^resolution. */
-	adc->drv_scale = capi_adc_chan_get_scale(chans[0], &v) != -ENOSYS;
-	if (adc->drv_scale || vref_mv)
+	/* What the driver has, from its ops: the channels are one ADC's. */
+	ops = chans[0]->adc_handle->adc_ops;
+	if (ops->chan_get_scale)
 		info |= IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_SCALE);
-	if (capi_adc_chan_get_code_offset(chans[0], &v) != -ENOSYS)
+	if (ops->chan_get_code_offset)
 		info |= IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_OFFSET);
-	if (capi_adc_chan_get_samples_hz(chans[0], &hz) != -ENOSYS)
+	if (ops->chan_get_samples_hz)
 		info |= IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_SAMP_FREQ);
 
-	for (i = 0; i < nb_chans; i++) {
-		uint8_t bits = configs[i].resolution;
+	/* A list of the values a writable one takes */
+	if (ops->chan_get_scale && ops->chan_set_scale && ops->chan_get_scale_available)
+		avail |= IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_SCALE);
+	if (ops->chan_get_samples_hz && ops->chan_set_samples_hz &&
+			ops->chan_get_samples_hz_available)
+		avail |= IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_SAMP_FREQ);
 
-		if (!chans[i] || !bits || bits > 32)
+	for (i = 0; i < nb_chans; i++) {
+		const struct capi_adc_chan_handle *h = chans[i];
+
+		if (!h || h->adc_handle != chans[0]->adc_handle || !h->resolution ||
+				h->resolution + h->shift > 32)
 			return -EINVAL;
 
 		adc->chans[i] = (struct iio_capi_chan){
 			.type = IIO_CAPI_VOLTAGE,
-			.channel = (int)configs[i].chan_id,
+			.channel = (int)h->chan_id,
 			.info = info,
+			.info_avail = avail,
 			.scan_index = (int)i,
-			.scan = {
-				.bits = bits,
-				.storage = bits <= 16 ? 16 : 32,
-			},
+			/* as the driver says its codes are laid out */
+			.scan = iio_capi_scan_of(h->resolution, h->is_signed, h->shift,
+					h->big_endian),
 		};
 	}
 
 	adc->handles = chans;
-	adc->configs = configs;
-	adc->vref_mv = vref_mv;
 	adc->stream_nb_chans = 0;
-	adc->stream_scans = 0;
-	adc->stream_pos = 0;
-	adc->no_stream = false;
 
 	adc->table.name = name;
 	adc->table.dev = adc;
 	adc->table.channels = adc->chans;
 	adc->table.nb_channels = nb_chans;
-	adc->table.ops = &adc_ops;
+	adc->ops = (struct iio_capi_table_ops){
+		.read_raw = adc_read_raw,
+		.write_raw = adc_write_raw,
+		.read_avail = adc_read_avail,
+		.read_scan = adc_read_scan,
+	};
+	if (ops->stream_enable && ops->stream_disable && ops->read_samples) {
+		adc->ops.read_scans = adc_read_scans;
+		adc->ops.enable_buffer = adc_enable_buffer;
+	}
+	adc->table.ops = &adc->ops;
+	adc->table.info = 0;
+	adc->table.info_avail = 0;
 
 	return iio_capi_table_register(&adc->table);
 }

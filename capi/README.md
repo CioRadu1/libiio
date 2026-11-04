@@ -142,7 +142,8 @@ target_link_libraries(<app> PRIVATE libiio::capi)
 
 ```c
 /* after capi_uart_init(), capi_adc_init() and capi_adc_chan_init() */
-iio_capi_adc_register(&iio_adc, "my-adc", chan_handles, chan_configs, nb_chans, vref_mv);
+/* the channels' layout, scale ... are as the driver describes them */
+iio_capi_adc_register(&iio_adc, "my-adc", chan_handles, nb_chans);
 return iiod_uart_run(uart, NULL);   /* the app's UARTn_IRQHandler calls capi_uart_isr(uart) */
 ```
 
@@ -168,7 +169,7 @@ capi/
 ├── CMakeLists.txt          # libiio's core + this port, as libiio::capi
 ├── iiod/uart.c             # transport: capi_uart, interrupt-driven receive, one session per client
 ├── backend.c               # the "capi:" backend: context, attributes, buffers, registers
-├── backend_table.c         # devices described by a channel table: ids, attributes, values, scans
+├── backend_table.c         # devices described by a channel table: ids, attributes, values, scans (one at a time, or a block's at once)
 ├── iio_capi_adc.c          # adapter: an ADC behind capi_adc as a table device
 └── include/
     ├── iiod_uart.h         # iiod_uart_run()

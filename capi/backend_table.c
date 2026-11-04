@@ -27,6 +27,10 @@
 /* The masks have a bit per table channel. */
 #define TABLE_MAX_CHANNELS 32
 
+/* Values read_scans fills at once: a block is read in chunks of as many
+ * scans as fit. */
+#define TABLE_CHUNK_VALUES 192
+
 /* Long enough for a channel id: capacitance<int> */
 #define TABLE_ID_LEN 32
 
@@ -46,6 +50,16 @@ static const char *const chan_type_names[] = {
 	[IIO_CAPI_COUNT] = "count",
 };
 
+/* The axis suffixes of the channel ids, as IIO names them. */
+static const char *const chan_modifier_names[] = {
+	[IIO_CAPI_MOD_NONE] = NULL,
+	[IIO_CAPI_MOD_X] = "x",
+	[IIO_CAPI_MOD_Y] = "y",
+	[IIO_CAPI_MOD_Z] = "z",
+	[IIO_CAPI_MOD_TEMP_AMBIENT] = "ambient",
+	[IIO_CAPI_MOD_TEMP_OBJECT] = "object",
+};
+
 /* The channel attribute each value is, as Linux names it. */
 static const char *const info_names[] = {
 	[IIO_CAPI_INFO_RAW] = "raw",
@@ -53,7 +67,20 @@ static const char *const info_names[] = {
 	[IIO_CAPI_INFO_SCALE] = "scale",
 	[IIO_CAPI_INFO_OFFSET] = "offset",
 	[IIO_CAPI_INFO_SAMP_FREQ] = "sampling_frequency",
+	[IIO_CAPI_INFO_CALIBBIAS] = "calibbias",
+	[IIO_CAPI_INFO_HPF_3DB] = "filter_high_pass_3db_frequency",
+	[IIO_CAPI_INFO_OVERSAMPLING_RATIO] = "oversampling_ratio",
+	[IIO_CAPI_INFO_THERMOCOUPLE_TYPE] = "thermocouple_type",
 };
+
+/* The suffix of the attribute that lists a value's values. */
+#define TABLE_AVAIL_SUFFIX "_available"
+
+/* Long enough for an attribute name: filter_high_pass_3db_frequency_available */
+#define TABLE_ATTR_LEN 48
+
+/* Values an _available attribute lists at most. */
+#define TABLE_AVAIL_MAX 16
 
 #define ARRAY_LEN(_a) (sizeof(_a) / sizeof((_a)[0]))
 
@@ -80,7 +107,7 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 {
 	const struct iio_capi_table_device *tdev = table_of(dev);
 	struct iio_data_format fmt;
-	char id[TABLE_ID_LEN];
+	char id[TABLE_ID_LEN], attr[TABLE_ATTR_LEN];
 	struct iio_channel *chn;
 	unsigned int i, info;
 	int ret;
@@ -88,7 +115,19 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 	for (i = 0; i < tdev->nb_channels; i++) {
 		const struct iio_capi_chan *chan = &tdev->channels[i];
 
-		snprintf(id, sizeof(id), "%s%d", chan_type_names[chan->type], chan->channel);
+		/* As IIO names a channel: with its number when it is
+		 * indexed, then its modifier */
+		if (chan->modifier != IIO_CAPI_MOD_NONE && chan->channel >= 0)
+			snprintf(id, sizeof(id), "%s%d_%s", chan_type_names[chan->type],
+					chan->channel, chan_modifier_names[chan->modifier]);
+		else if (chan->modifier != IIO_CAPI_MOD_NONE)
+			snprintf(id, sizeof(id), "%s_%s", chan_type_names[chan->type],
+					chan_modifier_names[chan->modifier]);
+		else if (chan->channel < 0)
+			snprintf(id, sizeof(id), "%s", chan_type_names[chan->type]);
+		else
+			snprintf(id, sizeof(id), "%s%d", chan_type_names[chan->type],
+					chan->channel);
 
 		fmt = (struct iio_data_format){
 			.length = chan->scan.storage,
@@ -116,31 +155,70 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 					chn, info_names[info], IIO_ATTR_TYPE_CHANNEL, NULL);
 			if (ret)
 				return ret;
+
+			if (!(chan->info_avail & IIO_CAPI_INFO_BIT(info)))
+				continue;
+
+			/* libiio copies the name */
+			snprintf(attr, sizeof(attr), "%s" TABLE_AVAIL_SUFFIX, info_names[info]);
+			ret = iio_channel_add_attr(chn, attr, IIO_ATTR_TYPE_CHANNEL, NULL);
+			if (ret)
+				return ret;
 		}
+	}
+
+	/* The device's own values, as device attributes */
+	for (info = 0; info < ARRAY_LEN(info_names); info++) {
+		if (!(tdev->info & IIO_CAPI_INFO_BIT(info)))
+			continue;
+
+		ret = iio_device_add_attr(iio_device, info_names[info], IIO_ATTR_TYPE_DEVICE);
+		if (ret)
+			return ret;
+
+		if (!(tdev->info_avail & IIO_CAPI_INFO_BIT(info)))
+			continue;
+
+		snprintf(attr, sizeof(attr), "%s" TABLE_AVAIL_SUFFIX, info_names[info]);
+		ret = iio_device_add_attr(iio_device, attr, IIO_ATTR_TYPE_DEVICE);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
 }
 
-/* The table channel and value a libiio attribute is. */
+/* The table channel and value a libiio attribute is (chan NULL for one of
+ * the device's own), and whether it is the value's _available list. */
 static int table_find(const struct iio_capi_table_device *tdev, const struct iio_attr *attr,
-		const struct iio_capi_chan **chan, enum iio_capi_info *info)
+		const struct iio_capi_chan **chan, enum iio_capi_info *info, bool *avail)
 {
 	const char *name = iio_attr_get_name(attr);
+	size_t n = strlen(name), sl = strlen(TABLE_AVAIL_SUFFIX);
 	unsigned int i;
 	int idx;
 
-	if (attr->type != IIO_ATTR_TYPE_CHANNEL || !attr->iio.chn)
-		return -ENOENT;
+	*avail = n > sl && !strcmp(name + n - sl, TABLE_AVAIL_SUFFIX);
+	if (*avail)
+		n -= sl;
 
-	idx = table_chan_index(attr->iio.chn);
-	if (idx < 0 || (unsigned int)idx >= tdev->nb_channels)
+	if (attr->type == IIO_ATTR_TYPE_DEVICE) {
+		*chan = NULL;
+	} else if (attr->type == IIO_ATTR_TYPE_CHANNEL && attr->iio.chn) {
+		idx = table_chan_index(attr->iio.chn);
+		if (idx < 0 || (unsigned int)idx >= tdev->nb_channels)
+			return -ENOENT;
+		*chan = &tdev->channels[idx];
+	} else {
 		return -ENOENT;
+	}
 
 	for (i = 0; i < ARRAY_LEN(info_names); i++) {
-		if (!strcmp(name, info_names[i])) {
-			*chan = &tdev->channels[idx];
+		if (strlen(info_names[i]) == n && !strncmp(name, info_names[i], n)) {
 			*info = (enum iio_capi_info)i;
+			/* only the device's own values are device attributes */
+			if (!*chan && !(tdev->info & IIO_CAPI_INFO_BIT(i)))
+				return -ENOENT;
 			return 0;
 		}
 	}
@@ -149,6 +227,27 @@ static int table_find(const struct iio_capi_table_device *tdev, const struct iio
 }
 
 /* --- values as text --- */
+
+int iio_capi_value(const struct capi_value *value, int32_t *val, int32_t *val2)
+{
+	*val = value->val;
+	*val2 = value->val2;
+
+	switch (value->type) {
+	case CAPI_VALUE_INT:
+		return IIO_CAPI_VAL_INT;
+	case CAPI_VALUE_INT_PLUS_MICRO:
+		return IIO_CAPI_VAL_INT_PLUS_MICRO;
+	case CAPI_VALUE_INT_PLUS_NANO:
+		return IIO_CAPI_VAL_INT_PLUS_NANO;
+	case CAPI_VALUE_FRACTIONAL:
+		return IIO_CAPI_VAL_FRACTIONAL;
+	case CAPI_VALUE_FRACTIONAL_LOG2:
+		return IIO_CAPI_VAL_FRACTIONAL_LOG2;
+	default:
+		return -EINVAL;
+	}
+}
 
 /* "<int>.<frac>", with frac of digits digits; the sign is taken from either
  * part, as Linux does for values between -1 and 0. */
@@ -182,20 +281,25 @@ static int format_value(char *dst, size_t len, int fmt, int32_t val, int32_t val
 		nano = (int64_t)val * 1000000000 / val2;
 		return format_fixed(dst, len, nano / 1000000000, nano % 1000000000, 9);
 	case IIO_CAPI_VAL_FRACTIONAL_LOG2:
-		if (val2 < 0 || val2 > 32)
+		/* truncated toward zero; past
+		 * 62 bits, 1 << val2 would not fit */
+		if (val2 < 0 || val2 > 62)
 			return -EINVAL;
 		nano = ((int64_t)val * 1000000000) / ((int64_t)1 << val2);
 		return format_fixed(dst, len, nano / 1000000000, nano % 1000000000, 9);
+	case IIO_CAPI_VAL_CHAR:
+		return snprintf(dst, len, "%c", (char)val);
 	default:
 		return -EINVAL;
 	}
 }
 
-/* "<int>[.<frac>]" into val + val2 / 1000000; "-0.5" is 0 and -500000. */
+/* "<int>[.<frac>]" into val + val2 / 1000000000, digits past the ninth
+ * dropped; "-0.5" is 0 and -500000000. */
 static int parse_value(const char *src, int32_t *val, int32_t *val2)
 {
 	const char *p = src;
-	int32_t frac = 0, scale = 100000;
+	int32_t frac = 0, scale = 100000000;
 	bool neg = false;
 	char *end;
 	long whole;
@@ -227,6 +331,48 @@ static int parse_value(const char *src, int32_t *val, int32_t *val2)
 	return 0;
 }
 
+/* A value's _available list: its values, a space apart. */
+static int table_read_avail(const struct iio_capi_table_device *tdev,
+		const struct iio_capi_chan *chan, enum iio_capi_info info, char *dst, size_t len)
+{
+	struct capi_value values[TABLE_AVAIL_MAX];
+	uint32_t i, nb = TABLE_AVAIL_MAX;
+	int32_t val, val2;
+	size_t pos = 0;
+	int ret, fmt;
+
+	if (!tdev->ops->read_avail)
+		return -ENOSYS;
+
+	ret = tdev->ops->read_avail(tdev->dev, chan, info, values, &nb);
+	if (ret)
+		return ret;
+
+	dst[0] = '\0';
+	for (i = 0; i < nb; i++) {
+		if (i) {
+			if (pos + 1 >= len)
+				return -ERANGE;
+			dst[pos++] = ' ';
+			dst[pos] = '\0';
+		}
+
+		fmt = iio_capi_value(&values[i], &val, &val2);
+		if (fmt < 0)
+			return fmt;
+
+		ret = format_value(dst + pos, len - pos, fmt, val, val2);
+		if (ret < 0)
+			return ret;
+		if ((size_t)ret >= len - pos)
+			return -ERANGE;
+		pos += (size_t)ret;
+	}
+
+	/* With the NUL, as libiio wants it. */
+	return (int)pos + 1;
+}
+
 static int table_read_attr(const struct iio_capi_device *dev, const struct iio_device *iio_device,
 		const struct iio_attr *attr, char *dst, size_t len)
 {
@@ -234,13 +380,16 @@ static int table_read_attr(const struct iio_capi_device *dev, const struct iio_d
 	const struct iio_capi_chan *chan;
 	enum iio_capi_info info;
 	int32_t val = 0, val2 = 0;
+	bool avail;
 	int ret;
 
 	(void)iio_device;
 
-	ret = table_find(tdev, attr, &chan, &info);
+	ret = table_find(tdev, attr, &chan, &info, &avail);
 	if (ret)
 		return ret;
+	if (avail)
+		return table_read_avail(tdev, chan, info, dst, len);
 	if (!tdev->ops->read_raw)
 		return -ENOSYS;
 
@@ -264,16 +413,17 @@ static int table_write_attr(const struct iio_capi_device *dev, const struct iio_
 	const struct iio_capi_table_device *tdev = table_of(dev);
 	const struct iio_capi_chan *chan;
 	enum iio_capi_info info;
-	int32_t val, val2;
+	struct capi_value value = {CAPI_VALUE_INT_PLUS_NANO, 0, 0};
+	bool avail;
 	char *buf;
 	int ret;
 
 	(void)iio_device;
 
-	ret = table_find(tdev, attr, &chan, &info);
+	ret = table_find(tdev, attr, &chan, &info, &avail);
 	if (ret)
 		return ret;
-	if (!tdev->ops->write_raw)
+	if (avail || !tdev->ops->write_raw)
 		return -EPERM;
 
 	len = strnlen(src, len);
@@ -285,12 +435,18 @@ static int table_write_attr(const struct iio_capi_device *dev, const struct iio_
 	memcpy(buf, src, len);
 	buf[len] = '\0';
 
-	ret = parse_value(buf, &val, &val2);
+	/* A character (the first written); else a number */
+	if (info == IIO_CAPI_INFO_THERMOCOUPLE_TYPE) {
+		value = (struct capi_value){CAPI_VALUE_INT, (unsigned char)buf[0], 0};
+		ret = len ? 0 : -EINVAL;
+	} else {
+		ret = parse_value(buf, &value.val, &value.val2);
+	}
 	capi_free(buf);
 	if (ret)
 		return ret;
 
-	ret = tdev->ops->write_raw(tdev->dev, chan, info, val, val2);
+	ret = tdev->ops->write_raw(tdev->dev, chan, info, &value);
 
 	return ret < 0 ? ret : (int)len;
 }
@@ -347,10 +503,14 @@ static uint32_t scan_layout(
 	return (size + largest - 1) / largest * largest;
 }
 
+/* The value's bits only, shift up: the bits around them are 0, as in the
+ * registers a part's samples come from. */
 static void pack_sample(uint8_t *dst, const struct iio_capi_scan_format *scan, int32_t value)
 {
 	unsigned int i, n = scan->storage / 8;
-	uint32_t raw = (uint32_t)value << scan->shift;
+	uint32_t bits = scan->bits < 32 ? ((uint32_t)value & ((1u << scan->bits) - 1)) :
+					  (uint32_t)value;
+	uint32_t raw = bits << scan->shift;
 
 	for (i = 0; i < n; i++)
 		dst[scan->is_big_endian ? n - 1 - i : i] = (uint8_t)(raw >> (8 * i));
@@ -396,6 +556,43 @@ static int table_set_enabled(struct iio_capi_table_device *tdev, bool enable, ui
 	return 0;
 }
 
+static void pack_scan(const struct iio_capi_table_device *tdev, uint32_t m,
+		const uint32_t *offsets, uint32_t size, uint8_t *dst, const int32_t *values)
+{
+	unsigned int i, k;
+
+	/* The padding is not left as whatever the block held. */
+	memset(dst, 0, size);
+
+	for (i = 0, k = 0; i < tdev->nb_channels; i++)
+		if (m & (1u << i))
+			pack_sample(dst + offsets[i], &tdev->channels[i].scan, values[k++]);
+}
+
+/* An input block from read_scans, a chunk of scans at a time. */
+static int table_read_chunks(struct iio_capi_table_device *tdev, uint32_t m,
+		const uint32_t *offsets, uint32_t size, uint8_t *data, size_t bytes)
+{
+	int32_t values[TABLE_CHUNK_VALUES];
+	uint32_t nb_values = (uint32_t)__builtin_popcount(m);
+	uint32_t chunk = TABLE_CHUNK_VALUES / nb_values, nb, j;
+	size_t nb_scans = bytes / size, done = 0;
+	int ret;
+
+	while (done < nb_scans) {
+		nb = nb_scans - done < chunk ? (uint32_t)(nb_scans - done) : chunk;
+
+		ret = tdev->ops->read_scans(tdev->dev, m, values, nb);
+		if (ret)
+			return ret;
+
+		for (j = 0; j < nb; j++, done++)
+			pack_scan(tdev, m, offsets, size, data + done * size, &values[j * nb_values]);
+	}
+
+	return 0;
+}
+
 static int table_transfer(struct iio_capi_table_device *tdev, const struct iio_device *iio_device,
 		const struct iio_channels_mask *mask, uint8_t *data, size_t bytes, bool output)
 {
@@ -418,6 +615,9 @@ static int table_transfer(struct iio_capi_table_device *tdev, const struct iio_d
 	if (ret)
 		return ret;
 
+	if (!output && tdev->ops->read_scans)
+		return table_read_chunks(tdev, m, offsets, size, data, bytes);
+
 	for (pos = 0; pos < bytes; pos += size) {
 		if (output) {
 			for (i = 0, k = 0; i < tdev->nb_channels; i++)
@@ -436,13 +636,7 @@ static int table_transfer(struct iio_capi_table_device *tdev, const struct iio_d
 		if (ret)
 			return ret;
 
-		/* The padding is not left as whatever the block held. */
-		memset(data + pos, 0, size);
-
-		for (i = 0, k = 0; i < tdev->nb_channels; i++)
-			if (m & (1u << i))
-				pack_sample(data + pos + offsets[i], &tdev->channels[i].scan,
-						values[k++]);
+		pack_scan(tdev, m, offsets, size, data + pos, values);
 	}
 
 	return 0;
@@ -493,7 +687,8 @@ static int table_check(const struct iio_capi_table_device *tdev, bool *has_scan,
 		const struct iio_capi_chan *chan = &tdev->channels[i];
 
 		if ((unsigned int)chan->type >= ARRAY_LEN(chan_type_names) ||
-				!chan_type_names[chan->type])
+				!chan_type_names[chan->type] ||
+				(unsigned int)chan->modifier >= ARRAY_LEN(chan_modifier_names))
 			return -EINVAL;
 
 		if (!is_scan_element(chan))
@@ -502,7 +697,8 @@ static int table_check(const struct iio_capi_table_device *tdev, bool *has_scan,
 		/* libiio packs scans by index, the table by its order. One
 		 * buffer has one direction. */
 		if (chan->scan_index <= last || !storage_ok(chan->scan.storage) ||
-				!chan->scan.bits || chan->scan.bits > chan->scan.storage ||
+				!chan->scan.bits ||
+				chan->scan.shift + chan->scan.bits > chan->scan.storage ||
 				(*has_scan && chan->output != *output))
 			return -EINVAL;
 
@@ -527,7 +723,8 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 	if (ret)
 		return ret;
 
-	has_buffer = has_scan && (output ? !!tdev->ops->write_scan : !!tdev->ops->read_scan);
+	has_buffer = has_scan && (output ? !!tdev->ops->write_scan :
+					   (tdev->ops->read_scan || tdev->ops->read_scans));
 
 	tdev->api = (struct iio_capi_device_api){
 		.add_channels = table_add_channels,
