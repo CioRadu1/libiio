@@ -6,6 +6,7 @@
 
 #include <capi_alloc.h>
 #include <capi_log.h>
+#include <ctype.h>
 #include <errno.h>
 #include <iio-private.h>
 #include <iio/iio-backend.h>
@@ -23,6 +24,10 @@
 #endif
 
 static struct iio_capi_device *capi_devices;
+
+/* The context's attributes (iio_capi_set_context_attrs()) */
+static const struct iio_capi_ctx_attr *capi_ctx_attrs;
+static unsigned int capi_nb_ctx_attrs;
 
 struct iio_buffer_pdata {
 	const struct iio_device *dev;
@@ -67,6 +72,45 @@ int iio_capi_device_register(struct iio_capi_device *dev)
 	dev->next = NULL;
 	dev->reg_sel = 0;
 	*tail = dev;
+
+	return 0;
+}
+
+/* A context attribute's name a client keeps: not uri, which it sets
+ * itself, nor one with a ',' (its backends' keys); and nothing the
+ * context's XML would have to escape, as it writes names as they are. */
+static bool capi_ctx_attr_name_ok(const char *name)
+{
+	const char *p;
+
+	if (!name || !*name || !strcmp(name, "uri"))
+		return false;
+
+	for (p = name; *p; p++)
+		if (!isalnum((unsigned char)*p) && *p != '_' && *p != '-' && *p != '.')
+			return false;
+
+	return true;
+}
+
+int iio_capi_set_context_attrs(const struct iio_capi_ctx_attr *attrs, unsigned int nb)
+{
+	unsigned int i, j;
+
+	if (nb && !attrs)
+		return -EINVAL;
+
+	for (i = 0; i < nb; i++) {
+		if (!capi_ctx_attr_name_ok(attrs[i].name) || !attrs[i].value)
+			return -EINVAL;
+
+		for (j = 0; j < i; j++)
+			if (!strcmp(attrs[j].name, attrs[i].name))
+				return -EINVAL;
+	}
+
+	capi_ctx_attrs = nb ? attrs : NULL;
+	capi_nb_ctx_attrs = nb;
 
 	return 0;
 }
@@ -380,6 +424,22 @@ static const struct iio_device *capi_get_trigger(const struct iio_device *dev)
 	return NULL;
 }
 
+static int capi_add_ctx_attrs(struct iio_context *ctx)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < capi_nb_ctx_attrs; i++) {
+		ret = iio_context_add_attr(ctx, capi_ctx_attrs[i].name, capi_ctx_attrs[i].value);
+		if (ret < 0) {
+			CAPI_LOG("cannot add context attribute %s: %d\n", capi_ctx_attrs[i].name, ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static struct iio_context *capi_create_context(
 		const struct iio_context_params *params, const char *args)
 {
@@ -400,6 +460,10 @@ static struct iio_context *capi_create_context(
 	if (iio_err(ctx)) {
 		return iio_err_cast(ctx);
 	}
+
+	ret = capi_add_ctx_attrs(ctx);
+	if (ret < 0)
+		goto err_destroy;
 
 	for (dev = capi_devices; dev; dev = dev->next) {
 		snprintf(id, sizeof(id), "iio:device%u", i);
