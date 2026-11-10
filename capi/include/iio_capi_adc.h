@@ -58,7 +58,9 @@ struct iio_capi_adc {
  * capi_adc_chan_read() of each channel, as fast as the buffer asks.
  *
  * ext is the part's own attributes (on the channels, the device, its buffer,
- * or debug ones), iio_capi_table.h, served after these; NULL for none.
+ * or debug ones), iio_capi_table.h, served after these; NULL for none. The
+ * driver's reg_access op, if it has one, is the debug attribute
+ * direct_reg_access (ext's reg_access, given, is served instead).
  *
  * Returns 0, -EINVAL for missing arguments, no channels or more than
  * IIO_CAPI_ADC_MAX_CHANNELS, channels of different ADCs, a resolution of 0

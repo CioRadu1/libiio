@@ -64,7 +64,9 @@ struct iio_capi_accel {
  * capi_temp_init() gave for the part's temperature sensor, adds the temp
  * channel; NULL leaves it out. ext is the part's own attributes (on the
  * channels, the device, its buffer, or debug ones), iio_capi_table.h; NULL
- * for none. Returns 0,
+ * for none. The driver's reg_access op, if it has one, is the debug
+ * attribute direct_reg_access (ext's reg_access, given, is served
+ * instead). Returns 0,
  * -EINVAL for missing arguments, a
  * driver without read_raw, a resolution of 0 or over 32, or a temp that
  * iio_capi_temp_chan() refuses, or what iio_capi_table_register() returns.

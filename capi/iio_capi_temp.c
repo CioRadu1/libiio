@@ -246,6 +246,14 @@ static bool temp_same_name(const struct iio_capi_chan *a, const struct iio_capi_
 	return a->modifier == b->modifier && a->channel == b->channel;
 }
 
+/* direct_reg_access: the registers of the one sensor */
+static int temp_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *readval)
+{
+	struct iio_capi_temp *temp = dev;
+
+	return capi_temp_reg_access(temp->handles[0], reg, writeval, readval);
+}
+
 int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
 		struct capi_temp_handle *const *handles, unsigned int nb_handles,
 		const struct iio_capi_ext *ext)
@@ -278,6 +286,9 @@ int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
 		.read_avail = temp_read_avail,
 		.read_scan = scan ? temp_read_scan : NULL,
 	};
+	/* One part's registers: with several sensors, whose would they be? */
+	if (nb_handles == 1 && handles[0]->ops && handles[0]->ops->reg_access)
+		temp->ops.reg_access = temp_reg_access;
 
 	temp->table.name = name;
 	temp->table.dev = temp;
