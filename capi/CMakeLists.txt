@@ -89,6 +89,11 @@ endif ()
 
 if (EXISTS "${CAPI_DIR}/inc/capi_dac.h")
     target_sources(libiio_capi PRIVATE iio_capi_dac.c)
+
+    # A part that is an ADC and a DAC (ad5592r ...), with both adapters
+    if (_capi_adc_scale)
+        target_sources(libiio_capi PRIVATE iio_capi_adc_dac.c)
+    endif ()
 endif ()
 
 # The temperature sensor adapter, for a CAPI that has capi_temp, and the

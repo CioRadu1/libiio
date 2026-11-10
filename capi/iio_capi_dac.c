@@ -17,6 +17,7 @@
 #include <iio_capi_table.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "iio_capi_priv.h"
 
 static unsigned int dac_chan_index(const struct iio_capi_dac *dac, const struct iio_capi_chan *chan)
 {
@@ -118,8 +119,7 @@ static int dac_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *
 	return capi_dac_reg_access(dac->handles[0]->dac_handle, reg, writeval, readval);
 }
 
-/* The table filled, not registered */
-static int dac_prepare(struct iio_capi_dac *dac, const char *name,
+int iio_capi_dac_prepare(struct iio_capi_dac *dac, const char *name,
 		struct capi_dac_chan_handle **chans, const struct iio_capi_chan_desc *descs,
 		unsigned int nb_chans, uint8_t resolution, const struct iio_capi_ext *ext)
 {
@@ -177,7 +177,7 @@ int iio_capi_dac_register_desc(struct iio_capi_dac *dac, const char *name,
 {
 	int ret;
 
-	ret = dac_prepare(dac, name, chans, descs, nb_chans, resolution, ext);
+	ret = iio_capi_dac_prepare(dac, name, chans, descs, nb_chans, resolution, ext);
 	if (ret)
 		return ret;
 
