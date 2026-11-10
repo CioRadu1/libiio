@@ -49,6 +49,17 @@ static const char *const chan_type_names[] = {
 	[IIO_CAPI_RESISTANCE] = "resistance",
 	[IIO_CAPI_CAPACITANCE] = "capacitance",
 	[IIO_CAPI_COUNT] = "count",
+	[IIO_CAPI_ALTVOLTAGE] = "altvoltage",
+	[IIO_CAPI_INCLI] = "incli",
+	[IIO_CAPI_VELOCITY] = "velocity",
+	[IIO_CAPI_ANGL] = "angl",
+	[IIO_CAPI_ROT] = "rot",
+	[IIO_CAPI_DELTA_ANGL] = "deltaangl",
+	[IIO_CAPI_DELTA_VELOCITY] = "deltavelocity",
+	[IIO_CAPI_PHASE] = "phase",
+	/* no-OS's; Linux has no weight type */
+	[IIO_CAPI_WEIGHT] = "weight",
+	[IIO_CAPI_FLAGS] = "flags",
 };
 
 /* The axis suffixes of the channel ids, as IIO names them. */
@@ -59,6 +70,11 @@ static const char *const chan_modifier_names[] = {
 	[IIO_CAPI_MOD_Z] = "z",
 	[IIO_CAPI_MOD_TEMP_AMBIENT] = "ambient",
 	[IIO_CAPI_MOD_TEMP_OBJECT] = "object",
+	[IIO_CAPI_MOD_PITCH] = "pitch",
+	[IIO_CAPI_MOD_YAW] = "yaw",
+	[IIO_CAPI_MOD_ROLL] = "roll",
+	[IIO_CAPI_MOD_I] = "i",
+	[IIO_CAPI_MOD_Q] = "q",
 };
 
 /* The channel attribute each value is, as Linux names it. */
@@ -72,6 +88,14 @@ static const char *const info_names[] = {
 	[IIO_CAPI_INFO_HPF_3DB] = "filter_high_pass_3db_frequency",
 	[IIO_CAPI_INFO_OVERSAMPLING_RATIO] = "oversampling_ratio",
 	[IIO_CAPI_INFO_THERMOCOUPLE_TYPE] = "thermocouple_type",
+	[IIO_CAPI_INFO_CALIBSCALE] = "calibscale",
+	[IIO_CAPI_INFO_CALIBPHASE] = "calibphase",
+	[IIO_CAPI_INFO_LPF_3DB] = "filter_low_pass_3db_frequency",
+	[IIO_CAPI_INFO_FREQUENCY] = "frequency",
+	[IIO_CAPI_INFO_PHASE] = "phase",
+	[IIO_CAPI_INFO_HARDWAREGAIN] = "hardwaregain",
+	[IIO_CAPI_INFO_POWERDOWN] = "powerdown",
+	[IIO_CAPI_INFO_EN] = "en",
 };
 
 /* The suffix of the attribute that lists a value's values. */
@@ -84,6 +108,9 @@ static const char *const info_names[] = {
 #define TABLE_AVAIL_MAX 16
 
 #define ARRAY_LEN(_a) (sizeof(_a) / sizeof((_a)[0]))
+
+/* chan_types has a bit per type, and all_types needs one more. */
+_Static_assert(ARRAY_LEN(chan_type_names) < 32, "too many channel types for chan_types");
 
 static struct iio_capi_table_device *table_of(const struct iio_capi_device *dev)
 {
@@ -431,6 +458,7 @@ static int format_fixed(char *dst, size_t len, int64_t whole, int64_t frac, unsi
 static int format_value(char *dst, size_t len, int fmt, int32_t val, int32_t val2)
 {
 	int64_t nano;
+	int ret;
 
 	switch (fmt) {
 	case IIO_CAPI_VAL_INT:
@@ -453,14 +481,20 @@ static int format_value(char *dst, size_t len, int fmt, int32_t val, int32_t val
 		return format_fixed(dst, len, nano / 1000000000, nano % 1000000000, 9);
 	case IIO_CAPI_VAL_CHAR:
 		return snprintf(dst, len, "%c", (char)val);
+	case IIO_CAPI_VAL_INT_PLUS_MICRO_DB:
+		ret = format_fixed(dst, len, val, val2, 6);
+		if (ret < 0 || (size_t)ret >= len)
+			return ret;
+		return ret + snprintf(dst + ret, len - (size_t)ret, " dB");
 	default:
 		return -EINVAL;
 	}
 }
 
 /* "<int>[.<frac>]" into val + val2 / 1000000000, digits past the ninth
- * dropped; "-0.5" is 0 and -500000000. */
-static int parse_value(const char *src, int32_t *val, int32_t *val2)
+ * dropped; "-0.5" is 0 and -500000000. With db, it may end with "dB", as
+ * Linux takes a gain in dB. */
+static int parse_value(const char *src, bool db, int32_t *val, int32_t *val2)
 {
 	const char *p = src;
 	int32_t frac = 0, scale = 100000000;
@@ -483,6 +517,11 @@ static int parse_value(const char *src, int32_t *val, int32_t *val2)
 			scale /= 10;
 		}
 	}
+
+	while (*end == ' ')
+		end++;
+	if (db && !strncmp(end, "dB", 2))
+		end += 2;
 
 	while (*end == ' ' || *end == '\n')
 		end++;
@@ -675,7 +714,8 @@ static int table_write_attr(const struct iio_capi_device *dev, const struct iio_
 		value = (struct capi_value){CAPI_VALUE_INT, (unsigned char)buf[0], 0};
 		ret = len ? 0 : -EINVAL;
 	} else {
-		ret = parse_value(buf, &value.val, &value.val2);
+		ret = parse_value(buf, !ext && info == IIO_CAPI_INFO_HARDWAREGAIN, &value.val,
+				&value.val2);
 	}
 	capi_free(buf);
 	if (ret)
