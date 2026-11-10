@@ -39,10 +39,29 @@ enum iio_capi_chan_type {
 	IIO_CAPI_RESISTANCE,
 	IIO_CAPI_CAPACITANCE,
 	IIO_CAPI_COUNT,
+	/* altvoltage: an output's frequency, phase ... (synthesizers, RF) */
+	IIO_CAPI_ALTVOLTAGE,
+	/* incli: inclination */
+	IIO_CAPI_INCLI,
+	IIO_CAPI_VELOCITY,
+	/* angl: an angle */
+	IIO_CAPI_ANGL,
+	/* rot: a rotation */
+	IIO_CAPI_ROT,
+	/* deltaangl, deltavelocity: an IMU's integrated angle and velocity */
+	IIO_CAPI_DELTA_ANGL,
+	IIO_CAPI_DELTA_VELOCITY,
+	IIO_CAPI_PHASE,
+	IIO_CAPI_WEIGHT,
+	/* flags: a part's status bits, in scans with its samples (an IMU's
+	 * error flags ...) */
+	IIO_CAPI_FLAGS,
 };
 
 /* What a channel measures within its type, as IIO's modifiers name it:
- * an axis (accel_x ...), a temperature's ambient or object. */
+ * an axis (accel_x ...), a temperature's ambient or object, a rotation's
+ * pitch, yaw or roll (rot_pitch ...), a complex signal's in-phase or
+ * quadrature part (voltage0_i, voltage0_q). */
 enum iio_capi_chan_modifier {
 	IIO_CAPI_MOD_NONE,
 	IIO_CAPI_MOD_X,
@@ -50,6 +69,11 @@ enum iio_capi_chan_modifier {
 	IIO_CAPI_MOD_Z,
 	IIO_CAPI_MOD_TEMP_AMBIENT,
 	IIO_CAPI_MOD_TEMP_OBJECT,
+	IIO_CAPI_MOD_PITCH,
+	IIO_CAPI_MOD_YAW,
+	IIO_CAPI_MOD_ROLL,
+	IIO_CAPI_MOD_I,
+	IIO_CAPI_MOD_Q,
 };
 
 /* The values a channel can have, each an attribute of it. */
@@ -73,6 +97,24 @@ enum iio_capi_info {
 	/* "thermocouple_type": a letter, written and read as one
 	 * (IIO_CAPI_VAL_CHAR) */
 	IIO_CAPI_INFO_THERMOCOUPLE_TYPE,
+	/* "calibscale": the calibration gain the part applies */
+	IIO_CAPI_INFO_CALIBSCALE,
+	/* "calibphase": the calibration phase the part applies */
+	IIO_CAPI_INFO_CALIBPHASE,
+	/* "filter_low_pass_3db_frequency", in Hz */
+	IIO_CAPI_INFO_LPF_3DB,
+	/* "frequency", in Hz: an output's (altvoltage ...) */
+	IIO_CAPI_INFO_FREQUENCY,
+	/* "phase", in radians */
+	IIO_CAPI_INFO_PHASE,
+	/* "hardwaregain": the gain of the part's amplifier, in dB as Linux has
+	 * it (read_raw gives IIO_CAPI_VAL_INT_PLUS_MICRO_DB; a write may end
+	 * with "dB") */
+	IIO_CAPI_INFO_HARDWAREGAIN,
+	/* "powerdown": 1 for the channel powered down, 0 for up */
+	IIO_CAPI_INFO_POWERDOWN,
+	/* "en": 1 for the channel enabled, 0 for not */
+	IIO_CAPI_INFO_EN,
 };
 
 #define IIO_CAPI_INFO_BIT(_info) (1u << (_info))
@@ -91,6 +133,8 @@ enum iio_capi_val {
 	IIO_CAPI_VAL_FRACTIONAL_LOG2,
 	/* the character val */
 	IIO_CAPI_VAL_CHAR,
+	/* val + val2 / 1000000, then " dB" */
+	IIO_CAPI_VAL_INT_PLUS_MICRO_DB,
 };
 
 /* A driver's capi_value as read_raw gives a value: val and val2 as they
