@@ -111,7 +111,8 @@ static int dac_write_scan(void *dev, uint32_t mask, const int32_t *values)
 }
 
 int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
-		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution)
+		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
+		const struct iio_capi_ext *ext)
 {
 	unsigned int i;
 
@@ -152,6 +153,7 @@ int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 	dac->table.ops = &dac->ops;
 	dac->table.info = 0;
 	dac->table.info_avail = 0;
+	dac->table.ext = ext;
 
 	return iio_capi_table_register(&dac->table);
 }

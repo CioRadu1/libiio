@@ -62,12 +62,16 @@ struct iio_capi_accel {
  * sampling_frequency are there when the driver has get_scale and get_odr;
  * sampling_frequency is writable when it has set_odr. temp, what
  * capi_temp_init() gave for the part's temperature sensor, adds the temp
- * channel; NULL leaves it out. Returns 0, -EINVAL for missing arguments, a
+ * channel; NULL leaves it out. ext is the part's own attributes (on the
+ * channels, the device, its buffer, or debug ones), iio_capi_table.h; NULL
+ * for none. Returns 0,
+ * -EINVAL for missing arguments, a
  * driver without read_raw, a resolution of 0 or over 32, or a temp that
  * iio_capi_temp_chan() refuses, or what iio_capi_table_register() returns.
  */
 int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
-		struct capi_accel_handle *handle, struct capi_temp_handle *temp);
+		struct capi_accel_handle *handle, struct capi_temp_handle *temp,
+		const struct iio_capi_ext *ext);
 
 #ifdef __cplusplus
 }

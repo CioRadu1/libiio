@@ -247,7 +247,8 @@ static bool temp_same_name(const struct iio_capi_chan *a, const struct iio_capi_
 }
 
 int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
-		struct capi_temp_handle *const *handles, unsigned int nb_handles)
+		struct capi_temp_handle *const *handles, unsigned int nb_handles,
+		const struct iio_capi_ext *ext)
 {
 	unsigned int i, j;
 	int ret, scan = 0;
@@ -285,6 +286,7 @@ int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
 	temp->table.ops = &temp->ops;
 	temp->table.info = 0;
 	temp->table.info_avail = 0;
+	temp->table.ext = ext;
 
 	return iio_capi_table_register(&temp->table);
 }

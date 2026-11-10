@@ -320,7 +320,8 @@ static int capi_dequeue_block(struct iio_block_pdata *pdata, bool nonblock)
 	return pdata->error;
 }
 
-/* An input or output buffer with every scan element. */
+/* An input or output buffer with every scan element, and the device's
+ * buffer attributes. */
 static int capi_add_buffer(const struct iio_capi_device *dev, struct iio_device *iio_device)
 {
 	struct iio_buffer *buf;
@@ -348,7 +349,7 @@ static int capi_add_buffer(const struct iio_capi_device *dev, struct iio_device 
 			return ret;
 	}
 
-	return 0;
+	return dev->api->add_buffer_attrs ? dev->api->add_buffer_attrs(dev, buf) : 0;
 }
 
 /* Debug register access (iio_reg), forwarded to the device. */

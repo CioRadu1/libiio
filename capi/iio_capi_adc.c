@@ -194,7 +194,8 @@ static int adc_read_scans(void *dev, uint32_t mask, int32_t *values, uint32_t nb
 }
 
 int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, unsigned int nb_chans)
+		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
+		const struct iio_capi_ext *ext)
 {
 	uint32_t info = IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_RAW), avail = 0;
 	const struct capi_adc_ops *ops;
@@ -259,6 +260,7 @@ int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 	adc->table.ops = &adc->ops;
 	adc->table.info = 0;
 	adc->table.info_avail = 0;
+	adc->table.ext = ext;
 
 	return iio_capi_table_register(&adc->table);
 }

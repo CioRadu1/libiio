@@ -56,14 +56,17 @@ struct iio_capi_temp {
  * the order of handles (what capi_temp_init() gave; the array is copied).
  * The device has a buffer when a sensor's driver gives its raw code and
  * layout; a scan is the codes of the sensors in it, read one after the
- * other, as fast as the buffer asks. Returns 0, -EINVAL for missing
+ * other, as fast as the buffer asks. ext is the part's own attributes (on
+ * the channels, the device, its buffer, or debug ones), iio_capi_table.h;
+ * NULL for none. Returns 0, -EINVAL for missing
  * arguments, no handle or more than IIO_CAPI_TEMP_MAX_CHANNELS, a driver
  * with neither get_temp nor get_raw, get_scale and get_offset, two sensors
  * that would have the same channel name, or what iio_capi_table_register()
  * returns.
  */
 int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
-		struct capi_temp_handle *const *handles, unsigned int nb_handles);
+		struct capi_temp_handle *const *handles, unsigned int nb_handles,
+		const struct iio_capi_ext *ext);
 
 /*
  * For adapters with a temp channel in their table: fill chan for handle,

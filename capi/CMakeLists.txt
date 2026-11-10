@@ -76,6 +76,10 @@ if (LIBIIO_CAPI_IIOD_UART)
     target_sources(libiio_capi PRIVATE iiod/uart.c)
 endif ()
 
+# The class adapters: each serves the devices behind one CAPI class to libiio
+# clients, on the channel table. They know a class, never a part, so no driver
+# needs IIO code of its own; each is built when CAPI has its class.
+
 # The ADC adapter, for a CAPI whose capi_adc has the calls it serves scale,
 # offset, sampling_frequency and captures from (capi_adc_chan_get_scale() ...).
 file(STRINGS "${CAPI_DIR}/inc/capi_adc.h" _capi_adc_scale REGEX "capi_adc_chan_get_scale")
