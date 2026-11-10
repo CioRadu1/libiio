@@ -6,7 +6,8 @@
 
 /*
  * Serves an ADC behind capi_adc (any driver's capi_adc_ops) as an IIO
- * device: one input voltage<chan_id> channel per CAPI channel, with raw and,
+ * device: one input voltage<chan_id> channel per CAPI channel, or as the
+ * application describes it (iio_capi_adc_register_desc()), with raw and,
  * given the reference voltage, scale, in a buffer of whole scans.
  */
 
@@ -14,6 +15,7 @@
 #define CAPI_INCLUDE_IIO_CAPI_ADC_H_
 
 #include <capi_adc.h>
+#include <iio_capi_desc.h>
 #include <iio_capi_table.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -70,6 +72,18 @@ struct iio_capi_adc {
 int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
 		const struct iio_capi_ext *ext);
+
+/*
+ * iio_capi_adc_register(), with descs saying what each channel is
+ * (iio_capi_desc.h), descs[i] for chans[i]: its type, number, modifier,
+ * differential pair, name, label and address, where capi_adc does not say;
+ * NULL for voltage<chan_id> channels, as iio_capi_adc_register() makes.
+ * Also -EINVAL for descriptions iio_capi_table_register() refuses (two
+ * channels of the same id, a differential one without numbers ...).
+ */
+int iio_capi_adc_register_desc(struct iio_capi_adc *adc, const char *name,
+		struct capi_adc_chan_handle **chans, const struct iio_capi_chan_desc *descs,
+		unsigned int nb_chans, const struct iio_capi_ext *ext);
 
 #ifdef __cplusplus
 }
