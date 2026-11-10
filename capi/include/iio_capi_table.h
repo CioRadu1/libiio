@@ -161,6 +161,10 @@ struct iio_capi_table_ops {
 	 * then come from here rather than read_scan. Calls that follow each
 	 * other while the buffer is on continue the same stream. */
 	int (*read_scans)(void *dev, uint32_t mask, int32_t *values, uint32_t nb_scans);
+	/* Register access, as iio_capi_ext's reg_access (which, given, is
+	 * served instead): what a class adapter has from its CAPI class's
+	 * reg_access op */
+	int (*reg_access)(void *dev, uint32_t reg, uint32_t writeval, uint32_t *readval);
 };
 
 /* The scan format of bits-bit samples a part's registers hold shift bits
@@ -238,12 +242,24 @@ struct iio_capi_attr {
  * 0, or -EINVAL for one with a fraction or out of range. */
 int iio_capi_value_int(const struct capi_value *value, int32_t min, int32_t max, int32_t *out);
 
-/* What a part adds to its class's device, as a Linux driver's iio_info
- * does: its own attributes; priv is what they get. */
+/*
+ * What a part adds to its class's device, as a Linux driver's iio_info
+ * does: its own attributes and its register access, each optional; priv
+ * is what they get.
+ *
+ * reg_access is Linux's debugfs_reg_access: the debug attribute
+ * direct_reg_access (iio_reg) serves it. With readval, it reads reg into
+ * *readval; without (NULL), it writes writeval to reg. It returns 0 or a
+ * negative error code (-EPERM for a register it does not write ...). A
+ * part with registers only fills priv and reg_access. A class adapter
+ * already serves its CAPI class's reg_access op (ops' reg_access): this
+ * one is for a part without it, or to serve another one instead.
+ */
 struct iio_capi_ext {
 	void *priv;
 	const struct iio_capi_attr *attrs;
 	unsigned int nb_attrs;
+	int (*reg_access)(void *priv, uint32_t reg, uint32_t writeval, uint32_t *readval);
 };
 
 /* A table device. Fill name, dev, channels, nb_channels and ops, and ext

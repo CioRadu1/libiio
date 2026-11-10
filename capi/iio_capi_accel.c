@@ -292,6 +292,15 @@ static int accel_enable_buffer(void *dev, uint32_t mask, bool enable)
 			capi_accel_stream_disable(accel->handle);
 }
 
+/* direct_reg_access: the part's registers (its temperature sensor's too,
+ * the same part's) */
+static int accel_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *readval)
+{
+	struct iio_capi_accel *accel = dev;
+
+	return capi_accel_reg_access(accel->handle, reg, writeval, readval);
+}
+
 int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
 		struct capi_accel_handle *handle, struct capi_temp_handle *temp,
 		const struct iio_capi_ext *ext)
@@ -387,6 +396,8 @@ int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
 		accel->ops.read_scans = accel_read_scans;
 		accel->ops.enable_buffer = accel_enable_buffer;
 	}
+	if (ops->reg_access)
+		accel->ops.reg_access = accel_reg_access;
 
 	accel->table.ops = &accel->ops;
 	accel->table.ext = ext;

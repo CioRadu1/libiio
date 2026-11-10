@@ -902,6 +902,36 @@ static int table_enable_buffer(const struct iio_capi_device *dev, bool enable)
 	return table_set_enabled(tdev, false, tdev->mask);
 }
 
+/* --- registers --- */
+
+/* direct_reg_access (backend.c) on the part's reg_access, or else the
+ * device's (its class's), as Linux's debugfs_reg_access: a read with
+ * readval, a write without. */
+static int table_reg_access(const struct iio_capi_device *dev, uint32_t reg, uint32_t writeval,
+		uint32_t *readval)
+{
+	const struct iio_capi_table_device *tdev = table_of(dev);
+	const struct iio_capi_ext *ext = tdev->ext;
+
+	if (ext && ext->reg_access)
+		return ext->reg_access(ext->priv, reg, writeval, readval);
+
+	return tdev->ops->reg_access(tdev->dev, reg, writeval, readval);
+}
+
+static int table_reg_read(const struct iio_capi_device *dev, uint32_t reg, uint32_t *val)
+{
+	if (!val)
+		return -EINVAL;
+
+	return table_reg_access(dev, reg, 0, val);
+}
+
+static int table_reg_write(const struct iio_capi_device *dev, uint32_t reg, uint32_t val)
+{
+	return table_reg_access(dev, reg, val, NULL);
+}
+
 /* --- registration --- */
 
 static bool storage_ok(uint8_t storage)
@@ -1069,7 +1099,7 @@ static int table_check(const struct iio_capi_table_device *tdev, bool *has_scan,
 
 int iio_capi_table_register(struct iio_capi_table_device *tdev)
 {
-	bool has_scan, output = false, has_buffer;
+	bool has_scan, output = false, has_buffer, has_regs;
 	int ret;
 
 	if (!tdev || !tdev->name || !tdev->ops || (tdev->nb_channels && !tdev->channels) ||
@@ -1087,6 +1117,8 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 	if (ret)
 		return ret;
 
+	has_regs = (tdev->ext && tdev->ext->reg_access) || tdev->ops->reg_access;
+
 	tdev->api = (struct iio_capi_device_api){
 		.add_channels = table_add_channels,
 		.read_attr = table_read_attr,
@@ -1094,6 +1126,8 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 		.read_samples = has_buffer && !output ? table_read_samples : NULL,
 		.write_samples = has_buffer && output ? table_write_samples : NULL,
 		.enable_buffer = has_buffer ? table_enable_buffer : NULL,
+		.reg_read = has_regs ? table_reg_read : NULL,
+		.reg_write = has_regs ? table_reg_write : NULL,
 		.add_buffer_attrs = has_buffer && tdev->ext ? table_add_buffer_attrs : NULL,
 	};
 

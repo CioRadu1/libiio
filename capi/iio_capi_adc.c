@@ -193,6 +193,14 @@ static int adc_read_scans(void *dev, uint32_t mask, int32_t *values, uint32_t nb
 	return adc_read_stream(adc, values, nb_scans);
 }
 
+/* direct_reg_access: the ADC's registers */
+static int adc_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *readval)
+{
+	struct iio_capi_adc *adc = dev;
+
+	return capi_adc_reg_access(adc->handles[0]->adc_handle, reg, writeval, readval);
+}
+
 int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
 		const struct iio_capi_ext *ext)
@@ -257,6 +265,8 @@ int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 		adc->ops.read_scans = adc_read_scans;
 		adc->ops.enable_buffer = adc_enable_buffer;
 	}
+	if (ops->reg_access)
+		adc->ops.reg_access = adc_reg_access;
 	adc->table.ops = &adc->ops;
 	adc->table.info = 0;
 	adc->table.info_avail = 0;

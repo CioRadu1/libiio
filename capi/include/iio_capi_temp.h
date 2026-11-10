@@ -58,7 +58,9 @@ struct iio_capi_temp {
  * layout; a scan is the codes of the sensors in it, read one after the
  * other, as fast as the buffer asks. ext is the part's own attributes (on
  * the channels, the device, its buffer, or debug ones), iio_capi_table.h;
- * NULL for none. Returns 0, -EINVAL for missing
+ * NULL for none. With one sensor, its driver's reg_access op, if it has
+ * one, is the debug attribute direct_reg_access (ext's reg_access, given,
+ * is served instead; with several sensors, only ext's). Returns 0, -EINVAL for missing
  * arguments, no handle or more than IIO_CAPI_TEMP_MAX_CHANNELS, a driver
  * with neither get_temp nor get_raw, get_scale and get_offset, two sensors
  * that would have the same channel name, or what iio_capi_table_register()

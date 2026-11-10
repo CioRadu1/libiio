@@ -110,6 +110,14 @@ static int dac_write_scan(void *dev, uint32_t mask, const int32_t *values)
 	return 0;
 }
 
+/* direct_reg_access: the DAC's registers */
+static int dac_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *readval)
+{
+	struct iio_capi_dac *dac = dev;
+
+	return capi_dac_reg_access(dac->handles[0]->dac_handle, reg, writeval, readval);
+}
+
 int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
 		const struct iio_capi_ext *ext)
@@ -150,6 +158,8 @@ int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 		.enable_buffer = dac_enable_buffer,
 		.write_scan = dac_write_scan,
 	};
+	if (chans[0]->dac_handle->dac_ops->reg_access)
+		dac->ops.reg_access = dac_reg_access;
 	dac->table.ops = &dac->ops;
 	dac->table.info = 0;
 	dac->table.info_avail = 0;

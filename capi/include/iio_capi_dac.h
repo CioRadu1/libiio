@@ -37,7 +37,9 @@ struct iio_capi_dac {
 /* Serve the channels (one DAC's) as the IIO device name. resolution is the
  * bits of a code: capi_dac's channel handles do not say it. ext is the
  * part's own attributes (on the channels, the device, its buffer, or debug
- * ones), iio_capi_table.h; NULL for none. */
+ * ones), iio_capi_table.h; NULL for none. The driver's reg_access op, if it
+ * has one, is the debug attribute direct_reg_access (ext's reg_access,
+ * given, is served instead). */
 int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
 		const struct iio_capi_ext *ext);
