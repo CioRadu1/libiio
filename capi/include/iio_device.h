@@ -96,6 +96,25 @@ struct iio_capi_device {
  * already registered. */
 int iio_capi_device_register(struct iio_capi_device *dev);
 
+/* A context attribute: what the firmware says of itself (hw_model,
+ * fw_version ...), as no-OS's iio_ctx_attr. iio_info lists them, sorted by
+ * name as libiio sorts every attribute; iio_attr -C reads them. */
+struct iio_capi_ctx_attr {
+	const char *name;
+	const char *value;
+};
+
+/*
+ * Set the context's attributes, as no-OS's iio_init_param.ctx_attrs. Call
+ * before the context is created, as iio_capi_device_register(); attrs is
+ * kept, not copied, and replaces what an earlier call set (NULL and 0 for
+ * none). Returns 0, or -EINVAL for attrs NULL with nb, a value NULL, a
+ * name used twice, or a name a client would not keep: empty, "uri" or of
+ * other characters than letters, digits, '_', '-' and '.' (a client sets
+ * uri itself, and the keys of its backends have a ',': serial,port ...).
+ */
+int iio_capi_set_context_attrs(const struct iio_capi_ctx_attr *attrs, unsigned int nb);
+
 #ifdef __cplusplus
 }
 #endif
