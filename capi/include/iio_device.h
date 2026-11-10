@@ -50,10 +50,15 @@ typedef int (*iio_capi_device_reg_read_t)(
 typedef int (*iio_capi_device_reg_write_t)(
 		const struct iio_capi_device *dev, uint32_t reg, uint32_t val);
 
+typedef int (*iio_capi_device_add_buffer_attrs_t)(
+		const struct iio_capi_device *dev, struct iio_buffer *buf);
+
 /* What a device does for libiio clients. add_channels is required; the
  * others are optional. A device with the sample op of its direction
  * (read_samples for an input one, write_samples for an output one) gets a
- * buffer; one with reg_read gets register access. */
+ * buffer; one with reg_read gets register access. add_buffer_attrs adds
+ * the buffer's attributes, once the buffer is there; read_attr and
+ * write_attr serve them. */
 struct iio_capi_device_api {
 	iio_capi_device_add_channels_t add_channels;
 	iio_capi_device_read_attr_t read_attr;
@@ -63,6 +68,7 @@ struct iio_capi_device_api {
 	iio_capi_device_enable_buffer_t enable_buffer;
 	iio_capi_device_reg_read_t reg_read;
 	iio_capi_device_reg_write_t reg_write;
+	iio_capi_device_add_buffer_attrs_t add_buffer_attrs;
 };
 
 /* One device served to libiio clients: a name, the part's handle and a

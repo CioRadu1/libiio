@@ -57,13 +57,17 @@ struct iio_capi_adc {
  * restarted, so a capture has a gap there. Without, a scan is a
  * capi_adc_chan_read() of each channel, as fast as the buffer asks.
  *
+ * ext is the part's own attributes (on the channels, the device, its buffer,
+ * or debug ones), iio_capi_table.h, served after these; NULL for none.
+ *
  * Returns 0, -EINVAL for missing arguments, no channels or more than
  * IIO_CAPI_ADC_MAX_CHANNELS, channels of different ADCs, a resolution of 0
  * or one that does not fit 32 bits with its shift, or what
  * iio_capi_table_register() returns.
  */
 int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, unsigned int nb_chans);
+		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
+		const struct iio_capi_ext *ext);
 
 #ifdef __cplusplus
 }

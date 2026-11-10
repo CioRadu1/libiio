@@ -103,6 +103,101 @@ static bool is_scan_element(const struct iio_capi_chan *chan)
 
 /* --- channels and attributes --- */
 
+/* The channel's id, as IIO names a channel: its type; with its number when
+ * it is numbered, then its modifier. */
+static void chan_id(const struct iio_capi_chan *chan, char *id, size_t len)
+{
+	const char *type = chan_type_names[chan->type];
+
+	if (chan->modifier != IIO_CAPI_MOD_NONE && chan->channel >= 0)
+		snprintf(id, len, "%s%d_%s", type, chan->channel,
+				chan_modifier_names[chan->modifier]);
+	else if (chan->modifier != IIO_CAPI_MOD_NONE)
+		snprintf(id, len, "%s_%s", type, chan_modifier_names[chan->modifier]);
+	else if (chan->channel < 0)
+		snprintf(id, len, "%s", type);
+	else
+		snprintf(id, len, "%s%d", type, chan->channel);
+}
+
+/* Whether the part's own attribute a is one of scope's: for a channel one,
+ * on chan, a table channel. */
+static bool ext_is_on(const struct iio_capi_attr *a, enum iio_capi_attr_scope scope,
+		const struct iio_capi_chan *chan)
+{
+	if (a->scope != scope)
+		return false;
+
+	return scope != IIO_CAPI_ATTR_CHANNEL || !a->chan_types ||
+	       (a->chan_types & IIO_CAPI_CHAN_TYPE_BIT(chan->type));
+}
+
+/* Whether name is "<base>_available". */
+static bool is_avail_of(const char *name, const char *base)
+{
+	size_t n = strlen(base);
+
+	return !strncmp(name, base, n) && !strcmp(name + n, TABLE_AVAIL_SUFFIX);
+}
+
+/* An attribute named name where scope's go: on chn, the device, or buf. */
+static int ext_add_one(struct iio_device *iio_device, struct iio_channel *chn,
+		struct iio_buffer *buf, enum iio_capi_attr_scope scope, const char *name)
+{
+	switch (scope) {
+	case IIO_CAPI_ATTR_CHANNEL:
+		return iio_channel_add_attr(chn, name, IIO_ATTR_TYPE_CHANNEL, NULL);
+	case IIO_CAPI_ATTR_BUFFER:
+		return iio_buffer_add_attr(buf, name);
+	case IIO_CAPI_ATTR_DEBUG:
+		return iio_device_add_attr(iio_device, name, IIO_ATTR_TYPE_DEBUG);
+	default:
+		return iio_device_add_attr(iio_device, name, IIO_ATTR_TYPE_DEVICE);
+	}
+}
+
+/* The part's own attributes of scope, after the values, each followed by
+ * its _available list when it has one: on chan, as chn, for a channel;
+ * on buf for the buffer; on the device else. */
+static int table_add_ext(const struct iio_capi_table_device *tdev, struct iio_device *iio_device,
+		enum iio_capi_attr_scope scope, const struct iio_capi_chan *chan,
+		struct iio_channel *chn, struct iio_buffer *buf)
+{
+	char name[TABLE_ATTR_LEN];
+	unsigned int i;
+	int ret;
+
+	if (!tdev->ext)
+		return 0;
+
+	for (i = 0; i < tdev->ext->nb_attrs; i++) {
+		const struct iio_capi_attr *a = &tdev->ext->attrs[i];
+
+		if (!ext_is_on(a, scope, chan))
+			continue;
+
+		ret = ext_add_one(iio_device, chn, buf, scope, a->name);
+		if (ret)
+			return ret;
+
+		if (!a->read_avail)
+			continue;
+
+		/* libiio copies the name; table_check_ext() made sure it fits */
+		snprintf(name, sizeof(name), "%s" TABLE_AVAIL_SUFFIX, a->name);
+		ret = ext_add_one(iio_device, chn, buf, scope, name);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int table_add_buffer_attrs(const struct iio_capi_device *dev, struct iio_buffer *buf)
+{
+	return table_add_ext(table_of(dev), NULL, IIO_CAPI_ATTR_BUFFER, NULL, NULL, buf);
+}
+
 static int table_add_channels(const struct iio_capi_device *dev, struct iio_device *iio_device)
 {
 	const struct iio_capi_table_device *tdev = table_of(dev);
@@ -115,19 +210,7 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 	for (i = 0; i < tdev->nb_channels; i++) {
 		const struct iio_capi_chan *chan = &tdev->channels[i];
 
-		/* As IIO names a channel: with its number when it is
-		 * indexed, then its modifier */
-		if (chan->modifier != IIO_CAPI_MOD_NONE && chan->channel >= 0)
-			snprintf(id, sizeof(id), "%s%d_%s", chan_type_names[chan->type],
-					chan->channel, chan_modifier_names[chan->modifier]);
-		else if (chan->modifier != IIO_CAPI_MOD_NONE)
-			snprintf(id, sizeof(id), "%s_%s", chan_type_names[chan->type],
-					chan_modifier_names[chan->modifier]);
-		else if (chan->channel < 0)
-			snprintf(id, sizeof(id), "%s", chan_type_names[chan->type]);
-		else
-			snprintf(id, sizeof(id), "%s%d", chan_type_names[chan->type],
-					chan->channel);
+		chan_id(chan, id, sizeof(id));
 
 		fmt = (struct iio_data_format){
 			.length = chan->scan.storage,
@@ -165,6 +248,10 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 			if (ret)
 				return ret;
 		}
+
+		ret = table_add_ext(tdev, iio_device, IIO_CAPI_ATTR_CHANNEL, chan, chn, NULL);
+		if (ret)
+			return ret;
 	}
 
 	/* The device's own values, as device attributes */
@@ -185,7 +272,68 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 			return ret;
 	}
 
-	return 0;
+	ret = table_add_ext(tdev, iio_device, IIO_CAPI_ATTR_DEVICE, NULL, NULL, NULL);
+	if (ret)
+		return ret;
+
+	/* beside direct_reg_access, which backend.c adds */
+	return table_add_ext(tdev, iio_device, IIO_CAPI_ATTR_DEBUG, NULL, NULL, NULL);
+}
+
+/* The part's own attribute a libiio attribute is, its channel (NULL but
+ * for a channel one), and whether it is the attribute's _available list;
+ * NULL when it is not one of them. */
+static const struct iio_capi_attr *table_find_ext(const struct iio_capi_table_device *tdev,
+		const struct iio_attr *attr, const struct iio_capi_chan **chan, bool *avail)
+{
+	const char *name = iio_attr_get_name(attr);
+	enum iio_capi_attr_scope scope;
+	unsigned int i;
+	int idx;
+
+	if (!tdev->ext)
+		return NULL;
+
+	*chan = NULL;
+	switch (attr->type) {
+	case IIO_ATTR_TYPE_DEVICE:
+		scope = IIO_CAPI_ATTR_DEVICE;
+		break;
+	case IIO_ATTR_TYPE_BUFFER:
+		scope = IIO_CAPI_ATTR_BUFFER;
+		break;
+	case IIO_ATTR_TYPE_DEBUG:
+		scope = IIO_CAPI_ATTR_DEBUG;
+		break;
+	case IIO_ATTR_TYPE_CHANNEL:
+		if (!attr->iio.chn)
+			return NULL;
+		idx = table_chan_index(attr->iio.chn);
+		if (idx < 0 || (unsigned int)idx >= tdev->nb_channels)
+			return NULL;
+		scope = IIO_CAPI_ATTR_CHANNEL;
+		*chan = &tdev->channels[idx];
+		break;
+	default:
+		return NULL;
+	}
+
+	for (i = 0; i < tdev->ext->nb_attrs; i++) {
+		const struct iio_capi_attr *a = &tdev->ext->attrs[i];
+
+		if (!ext_is_on(a, scope, *chan))
+			continue;
+
+		*avail = false;
+		if (!strcmp(a->name, name))
+			return a;
+
+		*avail = true;
+		if (a->read_avail && is_avail_of(name, a->name))
+			return a;
+	}
+
+	return NULL;
 }
 
 /* The table channel and value a libiio attribute is (chan NULL for one of
@@ -247,6 +395,18 @@ int iio_capi_value(const struct capi_value *value, int32_t *val, int32_t *val2)
 	default:
 		return -EINVAL;
 	}
+}
+
+int iio_capi_value_int(const struct capi_value *value, int32_t min, int32_t max, int32_t *out)
+{
+	int64_t nano = capi_value_nano(value);
+
+	if (nano % 1000000000 || nano / 1000000000 < min || nano / 1000000000 > max)
+		return -EINVAL;
+
+	*out = (int32_t)(nano / 1000000000);
+
+	return 0;
 }
 
 /* "<int>.<frac>", with frac of digits digits; the sign is taken from either
@@ -331,22 +491,16 @@ static int parse_value(const char *src, int32_t *val, int32_t *val2)
 	return 0;
 }
 
-/* A value's _available list: its values, a space apart. */
-static int table_read_avail(const struct iio_capi_table_device *tdev,
-		const struct iio_capi_chan *chan, enum iio_capi_info info, char *dst, size_t len)
+/* An _available list: the values, a space apart. */
+static int format_list(const struct capi_value *values, uint32_t nb, char *dst, size_t len)
 {
-	struct capi_value values[TABLE_AVAIL_MAX];
-	uint32_t i, nb = TABLE_AVAIL_MAX;
+	uint32_t i;
 	int32_t val, val2;
 	size_t pos = 0;
 	int ret, fmt;
 
-	if (!tdev->ops->read_avail)
-		return -ENOSYS;
-
-	ret = tdev->ops->read_avail(tdev->dev, chan, info, values, &nb);
-	if (ret)
-		return ret;
+	if (nb > TABLE_AVAIL_MAX)
+		return -ERANGE;
 
 	dst[0] = '\0';
 	for (i = 0; i < nb; i++) {
@@ -373,11 +527,46 @@ static int table_read_avail(const struct iio_capi_table_device *tdev,
 	return (int)pos + 1;
 }
 
+/* A value's _available list. */
+static int table_read_avail(const struct iio_capi_table_device *tdev,
+		const struct iio_capi_chan *chan, enum iio_capi_info info, char *dst, size_t len)
+{
+	struct capi_value values[TABLE_AVAIL_MAX];
+	uint32_t nb = TABLE_AVAIL_MAX;
+	int ret;
+
+	if (!tdev->ops->read_avail)
+		return -ENOSYS;
+
+	ret = tdev->ops->read_avail(tdev->dev, chan, info, values, &nb);
+	if (ret)
+		return ret;
+
+	return format_list(values, nb, dst, len);
+}
+
+/* The part's own attribute's _available list. */
+static int ext_read_avail(const struct iio_capi_table_device *tdev, const struct iio_capi_attr *a,
+		const struct iio_capi_chan *chan, char *dst, size_t len)
+{
+	struct capi_value values[TABLE_AVAIL_MAX];
+	uint32_t nb = TABLE_AVAIL_MAX;
+	int ret;
+
+	ret = a->read_avail(tdev->ext->priv, chan, a->arg, values, &nb);
+	if (ret)
+		return ret;
+
+	return format_list(values, nb, dst, len);
+}
+
 static int table_read_attr(const struct iio_capi_device *dev, const struct iio_device *iio_device,
 		const struct iio_attr *attr, char *dst, size_t len)
 {
 	const struct iio_capi_table_device *tdev = table_of(dev);
+	const struct iio_capi_attr *ext;
 	const struct iio_capi_chan *chan;
+	struct capi_value value;
 	enum iio_capi_info info;
 	int32_t val = 0, val2 = 0;
 	bool avail;
@@ -385,15 +574,42 @@ static int table_read_attr(const struct iio_capi_device *dev, const struct iio_d
 
 	(void)iio_device;
 
-	ret = table_find(tdev, attr, &chan, &info, &avail);
-	if (ret)
-		return ret;
-	if (avail)
-		return table_read_avail(tdev, chan, info, dst, len);
-	if (!tdev->ops->read_raw)
-		return -ENOSYS;
+	ext = table_find_ext(tdev, attr, &chan, &avail);
+	if (ext && avail)
+		return ext_read_avail(tdev, ext, chan, dst, len);
 
-	ret = tdev->ops->read_raw(tdev->dev, chan, info, &val, &val2);
+	if (ext && ext->show) {
+		ret = ext->show(tdev->ext->priv, chan, ext->arg, dst, len);
+		if (ret < 0)
+			return ret;
+		if ((size_t)ret >= len)
+			return -ERANGE;
+
+		/* With the NUL, as libiio wants it. */
+		return ret + 1;
+	}
+
+	if (ext) {
+		/* A number, written as the values are */
+		if (!ext->read)
+			return -EPERM;
+
+		ret = ext->read(tdev->ext->priv, chan, ext->arg, &value);
+		if (ret < 0)
+			return ret;
+
+		ret = iio_capi_value(&value, &val, &val2);
+	} else {
+		ret = table_find(tdev, attr, &chan, &info, &avail);
+		if (ret)
+			return ret;
+		if (avail)
+			return table_read_avail(tdev, chan, info, dst, len);
+		if (!tdev->ops->read_raw)
+			return -ENOSYS;
+
+		ret = tdev->ops->read_raw(tdev->dev, chan, info, &val, &val2);
+	}
 	if (ret < 0)
 		return ret;
 
@@ -411,20 +627,27 @@ static int table_write_attr(const struct iio_capi_device *dev, const struct iio_
 		const struct iio_attr *attr, const char *src, size_t len)
 {
 	const struct iio_capi_table_device *tdev = table_of(dev);
+	const struct iio_capi_attr *ext;
 	const struct iio_capi_chan *chan;
-	enum iio_capi_info info;
+	enum iio_capi_info info = IIO_CAPI_INFO_RAW;
 	struct capi_value value = {CAPI_VALUE_INT_PLUS_NANO, 0, 0};
-	bool avail;
+	bool avail = false;
 	char *buf;
 	int ret;
 
 	(void)iio_device;
 
-	ret = table_find(tdev, attr, &chan, &info, &avail);
-	if (ret)
-		return ret;
-	if (avail || !tdev->ops->write_raw)
-		return -EPERM;
+	ext = table_find_ext(tdev, attr, &chan, &avail);
+	if (ext) {
+		if (avail || (!ext->store && !ext->write))
+			return -EPERM;
+	} else {
+		ret = table_find(tdev, attr, &chan, &info, &avail);
+		if (ret)
+			return ret;
+		if (avail || !tdev->ops->write_raw)
+			return -EPERM;
+	}
 
 	len = strnlen(src, len);
 
@@ -435,8 +658,16 @@ static int table_write_attr(const struct iio_capi_device *dev, const struct iio_
 	memcpy(buf, src, len);
 	buf[len] = '\0';
 
+	/* The part's own attribute as text parses it itself */
+	if (ext && ext->store) {
+		ret = ext->store(tdev->ext->priv, chan, ext->arg, buf);
+		capi_free(buf);
+
+		return ret < 0 ? ret : (int)len;
+	}
+
 	/* A character (the first written); else a number */
-	if (info == IIO_CAPI_INFO_THERMOCOUPLE_TYPE) {
+	if (!ext && info == IIO_CAPI_INFO_THERMOCOUPLE_TYPE) {
 		value = (struct capi_value){CAPI_VALUE_INT, (unsigned char)buf[0], 0};
 		ret = len ? 0 : -EINVAL;
 	} else {
@@ -446,7 +677,10 @@ static int table_write_attr(const struct iio_capi_device *dev, const struct iio_
 	if (ret)
 		return ret;
 
-	ret = tdev->ops->write_raw(tdev->dev, chan, info, &value);
+	if (ext)
+		ret = ext->write(tdev->ext->priv, chan, ext->arg, &value);
+	else
+		ret = tdev->ops->write_raw(tdev->dev, chan, info, &value);
 
 	return ret < 0 ? ret : (int)len;
 }
@@ -675,6 +909,129 @@ static bool storage_ok(uint8_t storage)
 	return storage == 8 || storage == 16 || storage == 32;
 }
 
+/* Whether name is an attribute the values in info make: one of them, or
+ * the _available list of one in info_avail too. */
+static bool is_value_of(uint32_t info, uint32_t info_avail, const char *name)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_LEN(info_names); i++) {
+		if (!(info & IIO_CAPI_INFO_BIT(i)))
+			continue;
+		if (!strcmp(name, info_names[i]))
+			return true;
+		if ((info_avail & IIO_CAPI_INFO_BIT(i)) && is_avail_of(name, info_names[i]))
+			return true;
+	}
+
+	return false;
+}
+
+/* Whether two of the part's own attributes could be on the same channel,
+ * or are of the same other scope. */
+static bool ext_overlap(const struct iio_capi_attr *a, const struct iio_capi_attr *b)
+{
+	if (a->scope != b->scope)
+		return false;
+	if (a->scope != IIO_CAPI_ATTR_CHANNEL || !a->chan_types || !b->chan_types)
+		return true;
+
+	return a->chan_types & b->chan_types;
+}
+
+/* Whether name, one ext->attrs[i] would make (its own, or its _available
+ * list), is taken where it would be: by a value of a channel it is on or
+ * of the device, by direct_reg_access, or by an attribute before it on the
+ * same channels. */
+static bool ext_name_taken(const struct iio_capi_table_device *tdev, unsigned int i,
+		const char *name)
+{
+	const struct iio_capi_ext *ext = tdev->ext;
+	const struct iio_capi_attr *a = &ext->attrs[i];
+	unsigned int j;
+
+	switch (a->scope) {
+	case IIO_CAPI_ATTR_CHANNEL:
+		for (j = 0; j < tdev->nb_channels; j++) {
+			const struct iio_capi_chan *chan = &tdev->channels[j];
+
+			if (ext_is_on(a, IIO_CAPI_ATTR_CHANNEL, chan) &&
+					is_value_of(chan->info, chan->info_avail, name))
+				return true;
+		}
+		break;
+	case IIO_CAPI_ATTR_DEVICE:
+		if (is_value_of(tdev->info, tdev->info_avail, name))
+			return true;
+		break;
+	case IIO_CAPI_ATTR_DEBUG:
+		if (!strcmp(name, "direct_reg_access"))
+			return true;
+		break;
+	default:
+		break;
+	}
+
+	for (j = 0; j < i; j++) {
+		const struct iio_capi_attr *b = &ext->attrs[j];
+
+		if (!ext_overlap(a, b))
+			continue;
+		if (!strcmp(b->name, name) || (b->read_avail && is_avail_of(name, b->name)))
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * Whether the part's own attributes can be served: each named, readable or
+ * writable as a number or as text (not both), an _available list only for
+ * a number, in a scope there is (the buffer for a table with one), channel
+ * types only for a channel one and of types there are, and no name of its
+ * own (or <name>_available) that the channels or the device it is on
+ * already have.
+ */
+static int table_check_ext(const struct iio_capi_table_device *tdev, bool has_buffer)
+{
+	const uint32_t all_types = (1u << ARRAY_LEN(chan_type_names)) - 1;
+	const struct iio_capi_ext *ext = tdev->ext;
+	char avail[TABLE_ATTR_LEN];
+	unsigned int i;
+
+	if (!ext)
+		return 0;
+
+	if (ext->nb_attrs && !ext->attrs)
+		return -EINVAL;
+
+	for (i = 0; i < ext->nb_attrs; i++) {
+		const struct iio_capi_attr *a = &ext->attrs[i];
+		bool number = a->read || a->write, text = a->show || a->store;
+
+		if (!a->name || !a->name[0] || number == text || (a->read_avail && !number) ||
+				(unsigned int)a->scope > IIO_CAPI_ATTR_DEBUG ||
+				(a->scope == IIO_CAPI_ATTR_BUFFER && !has_buffer) ||
+				(a->chan_types & ~all_types) ||
+				(a->scope != IIO_CAPI_ATTR_CHANNEL && a->chan_types))
+			return -EINVAL;
+
+		if (ext_name_taken(tdev, i, a->name))
+			return -EINVAL;
+
+		if (!a->read_avail)
+			continue;
+
+		if (strlen(a->name) + strlen(TABLE_AVAIL_SUFFIX) >= sizeof(avail))
+			return -EINVAL;
+		snprintf(avail, sizeof(avail), "%s" TABLE_AVAIL_SUFFIX, a->name);
+		if (ext_name_taken(tdev, i, avail))
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
 /* Whether the table can be served, and the direction of its buffer. */
 static int table_check(const struct iio_capi_table_device *tdev, bool *has_scan, bool *output)
 {
@@ -726,6 +1083,10 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 	has_buffer = has_scan && (output ? !!tdev->ops->write_scan :
 					   (tdev->ops->read_scan || tdev->ops->read_scans));
 
+	ret = table_check_ext(tdev, has_buffer);
+	if (ret)
+		return ret;
+
 	tdev->api = (struct iio_capi_device_api){
 		.add_channels = table_add_channels,
 		.read_attr = table_read_attr,
@@ -733,6 +1094,7 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 		.read_samples = has_buffer && !output ? table_read_samples : NULL,
 		.write_samples = has_buffer && output ? table_write_samples : NULL,
 		.enable_buffer = has_buffer ? table_enable_buffer : NULL,
+		.add_buffer_attrs = has_buffer && tdev->ext ? table_add_buffer_attrs : NULL,
 	};
 
 	/* Field by field: iio_capi_device_register() owns next. */

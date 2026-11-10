@@ -180,8 +180,74 @@ static inline struct iio_capi_scan_format iio_capi_scan_of(uint8_t bits, bool is
 	};
 }
 
-/* A table device. Fill name, dev, channels, nb_channels and ops; the rest
- * is backend_table.c's. */
+/* Where a part's own attribute is, as in Linux: on the table's channels
+ * (those of chan_types); on the device; on its buffer (buffer0, for a table
+ * that has one); or a debug attribute (Linux's debugfs ones, iio_attr -D),
+ * beside direct_reg_access. */
+enum iio_capi_attr_scope {
+	IIO_CAPI_ATTR_CHANNEL,
+	IIO_CAPI_ATTR_DEVICE,
+	IIO_CAPI_ATTR_BUFFER,
+	IIO_CAPI_ATTR_DEBUG,
+};
+
+/* A channel type's bit in iio_capi_attr.chan_types. */
+#define IIO_CAPI_CHAN_TYPE_BIT(_type) (1u << (_type))
+
+/*
+ * An attribute a part has beyond its class's values (no-OS's and Linux's
+ * ext_info), either as a number or as text:
+ *
+ * - read / write: a value, written and parsed as the class's values are
+ *   (iio_capi_table_ops' read_raw, write_raw). read fills value, of any
+ *   capi_value type; write gets the text written as a
+ *   CAPI_VALUE_INT_PLUS_NANO, up to 9 decimals (iio_capi_value_int() for
+ *   a whole number). Both return 0. With read_avail, it also has a
+ *   <name>_available attribute, read-only: the values it takes, a space
+ *   apart, as read_avail lists them (in: the room in values, out: how
+ *   many there are; 0 or a negative error code).
+ * - show / store: the text itself. show writes it into buf, len bytes, and
+ *   returns its length; store gets the text written, NUL-terminated, and
+ *   returns 0.
+ *
+ * One pair or the other: without the setter it is read-only, without the
+ * getter write-only. chan is the channel, NULL for another scope's; arg
+ * is the attribute's, so one pair of callbacks can serve several (as
+ * no-OS's iio_attribute.priv). All return a negative error code.
+ */
+struct iio_capi_attr {
+	const char *name;
+	enum iio_capi_attr_scope scope;
+	/* For a channel attribute, the types of the channels it is on
+	 * (IIO_CAPI_CHAN_TYPE_BIT()s); 0 for every channel. Two of the same
+	 * name are on channels of different types. 0 for another scope. */
+	uint32_t chan_types;
+	intptr_t arg;
+	int (*read)(void *priv, const struct iio_capi_chan *chan, intptr_t arg,
+			struct capi_value *value);
+	int (*write)(void *priv, const struct iio_capi_chan *chan, intptr_t arg,
+			const struct capi_value *value);
+	int (*read_avail)(void *priv, const struct iio_capi_chan *chan, intptr_t arg,
+			struct capi_value *values, uint32_t *nb);
+	int (*show)(void *priv, const struct iio_capi_chan *chan, intptr_t arg, char *buf,
+			size_t len);
+	int (*store)(void *priv, const struct iio_capi_chan *chan, intptr_t arg, const char *buf);
+};
+
+/* The whole number a written value is (write's value), from min to max:
+ * 0, or -EINVAL for one with a fraction or out of range. */
+int iio_capi_value_int(const struct capi_value *value, int32_t min, int32_t max, int32_t *out);
+
+/* What a part adds to its class's device, as a Linux driver's iio_info
+ * does: its own attributes; priv is what they get. */
+struct iio_capi_ext {
+	void *priv;
+	const struct iio_capi_attr *attrs;
+	unsigned int nb_attrs;
+};
+
+/* A table device. Fill name, dev, channels, nb_channels and ops, and ext
+ * for a part with attributes of its own; the rest is backend_table.c's. */
 struct iio_capi_table_device {
 	/* IIO device name the host sees */
 	const char *name;
@@ -195,6 +261,9 @@ struct iio_capi_table_device {
 	 * <attribute>_available list */
 	uint32_t info;
 	uint32_t info_avail;
+	/* The part's own attributes and registers, after the values; NULL
+	 * for none */
+	const struct iio_capi_ext *ext;
 
 	struct iio_capi_device iio;
 	struct iio_capi_device_api api;
@@ -206,7 +275,13 @@ struct iio_capi_table_device {
 /* Add the device to the context, as iio_capi_device_register(). Returns 0,
  * -EINVAL for a table it cannot serve (no name or ops, more than 32
  * channels, scan_index not rising, an unknown type or modifier, a storage
- * that is not 8, 16 or 32 bits, a shift that leaves no room for the bits), or -EEXIST for a device already registered. */
+ * that is not 8, 16 or 32 bits, a shift that leaves no room for the bits,
+ * an ext attribute without a name, with no callbacks, with both a number's
+ * and text's, with read_avail on a text one, with chan_types of unknown
+ * types or on another scope than a channel one, on the buffer of a table
+ * without one, or whose name (or <name>_available) is one the channels or
+ * the device it is on already have: a value's, another ext attribute's,
+ * direct_reg_access), or -EEXIST for a device already registered. */
 int iio_capi_table_register(struct iio_capi_table_device *tdev);
 
 #ifdef __cplusplus
