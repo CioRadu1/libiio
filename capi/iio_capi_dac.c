@@ -118,9 +118,10 @@ static int dac_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *
 	return capi_dac_reg_access(dac->handles[0]->dac_handle, reg, writeval, readval);
 }
 
-int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
-		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
-		const struct iio_capi_ext *ext)
+/* The table filled, not registered */
+static int dac_prepare(struct iio_capi_dac *dac, const char *name,
+		struct capi_dac_chan_handle **chans, const struct iio_capi_chan_desc *descs,
+		unsigned int nb_chans, uint8_t resolution, const struct iio_capi_ext *ext)
 {
 	unsigned int i;
 
@@ -143,6 +144,8 @@ int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 			.scan_index = (int)i,
 			.scan = iio_capi_scan_of(resolution, false, 0, false),
 		};
+		if (descs)
+			iio_capi_chan_describe(&dac->chans[i], &descs[i]);
 		dac->last[i] = 0;
 	}
 
@@ -165,5 +168,25 @@ int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 	dac->table.info_avail = 0;
 	dac->table.ext = ext;
 
+	return 0;
+}
+
+int iio_capi_dac_register_desc(struct iio_capi_dac *dac, const char *name,
+		struct capi_dac_chan_handle **chans, const struct iio_capi_chan_desc *descs,
+		unsigned int nb_chans, uint8_t resolution, const struct iio_capi_ext *ext)
+{
+	int ret;
+
+	ret = dac_prepare(dac, name, chans, descs, nb_chans, resolution, ext);
+	if (ret)
+		return ret;
+
 	return iio_capi_table_register(&dac->table);
+}
+
+int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
+		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
+		const struct iio_capi_ext *ext)
+{
+	return iio_capi_dac_register_desc(dac, name, chans, NULL, nb_chans, resolution, ext);
 }

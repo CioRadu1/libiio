@@ -127,6 +127,21 @@ struct iio_capi_chan {
 	 * is not in scans */
 	int scan_index;
 	struct iio_capi_scan_format scan;
+	/* A differential channel, as IIO names one: channel is its positive
+	 * input, channel2 its negative one, the id <type><channel>-
+	 * <type><channel2> (voltage0-voltage1). Numbered (channel and channel2
+	 * from 0) and without a modifier. channel2 is ignored else. */
+	bool differential;
+	int channel2;
+	/* What clients show as its name and label (iio_info's "voltage0:
+	 * <name>", "label: ..."); NULL for none. name is no-OS's
+	 * iio_channel.name, label Linux's in_<id>_label. */
+	const char *name;
+	const char *label;
+	/* The part's own, for the callbacks of its attributes (chan->address),
+	 * as no-OS's and Linux's channel address: a register, an input's
+	 * number ...; the table does not use it. */
+	uintptr_t address;
 };
 
 /*
@@ -292,6 +307,8 @@ struct iio_capi_table_device {
  * -EINVAL for a table it cannot serve (no name or ops, more than 32
  * channels, scan_index not rising, an unknown type or modifier, a storage
  * that is not 8, 16 or 32 bits, a shift that leaves no room for the bits,
+ * a differential channel without numbers or with a modifier, two channels
+ * of the same id and direction,
  * an ext attribute without a name, with no callbacks, with both a number's
  * and text's, with read_avail on a text one, with chan_types of unknown
  * types or on another scope than a channel one, on the buffer of a table

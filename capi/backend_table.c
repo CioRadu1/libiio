@@ -31,8 +31,9 @@
  * scans as fit. */
 #define TABLE_CHUNK_VALUES 192
 
-/* Long enough for a channel id: capacitance<int> */
-#define TABLE_ID_LEN 32
+/* Long enough for a channel id: a differential one of the longest type,
+ * humidityrelative<int>-humidityrelative<int> */
+#define TABLE_ID_LEN 64
 
 /* The prefixes of the channel ids, as Linux names them. */
 static const char *const chan_type_names[] = {
@@ -104,12 +105,15 @@ static bool is_scan_element(const struct iio_capi_chan *chan)
 /* --- channels and attributes --- */
 
 /* The channel's id, as IIO names a channel: its type; with its number when
- * it is numbered, then its modifier. */
+ * it is numbered, then its modifier; or the two inputs of a differential
+ * one (voltage0-voltage1). */
 static void chan_id(const struct iio_capi_chan *chan, char *id, size_t len)
 {
 	const char *type = chan_type_names[chan->type];
 
-	if (chan->modifier != IIO_CAPI_MOD_NONE && chan->channel >= 0)
+	if (chan->differential)
+		snprintf(id, len, "%s%d-%s%d", type, chan->channel, type, chan->channel2);
+	else if (chan->modifier != IIO_CAPI_MOD_NONE && chan->channel >= 0)
 		snprintf(id, len, "%s%d_%s", type, chan->channel,
 				chan_modifier_names[chan->modifier]);
 	else if (chan->modifier != IIO_CAPI_MOD_NONE)
@@ -223,8 +227,8 @@ static int table_add_channels(const struct iio_capi_device *dev, struct iio_devi
 		/* Returns NULL, not an error pointer, when it fails. libiio
 		 * ends a scan at the first channel with a negative index. */
 		chn = iio_device_add_channel(iio_device,
-				is_scan_element(chan) ? chan->scan_index : -1, id, NULL, NULL,
-				chan->output, is_scan_element(chan), &fmt);
+				is_scan_element(chan) ? chan->scan_index : -1, id, chan->name,
+				chan->label, chan->output, is_scan_element(chan), &fmt);
 		if (!chn)
 			return -ENOMEM;
 
@@ -1065,8 +1069,9 @@ static int table_check_ext(const struct iio_capi_table_device *tdev, bool has_bu
 /* Whether the table can be served, and the direction of its buffer. */
 static int table_check(const struct iio_capi_table_device *tdev, bool *has_scan, bool *output)
 {
+	char id[TABLE_ID_LEN], other[TABLE_ID_LEN];
+	unsigned int i, j;
 	int last = -1;
-	unsigned int i;
 
 	*has_scan = false;
 
@@ -1077,6 +1082,20 @@ static int table_check(const struct iio_capi_table_device *tdev, bool *has_scan,
 				!chan_type_names[chan->type] ||
 				(unsigned int)chan->modifier >= ARRAY_LEN(chan_modifier_names))
 			return -EINVAL;
+
+		if (chan->differential && (chan->channel < 0 || chan->channel2 < 0 ||
+				chan->modifier != IIO_CAPI_MOD_NONE))
+			return -EINVAL;
+
+		/* libiio tells channels apart by id and direction */
+		chan_id(chan, id, sizeof(id));
+		for (j = 0; j < i; j++) {
+			if (tdev->channels[j].output != chan->output)
+				continue;
+			chan_id(&tdev->channels[j], other, sizeof(other));
+			if (!strcmp(id, other))
+				return -EINVAL;
+		}
 
 		if (!is_scan_element(chan))
 			continue;

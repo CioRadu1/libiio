@@ -201,9 +201,10 @@ static int adc_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *
 	return capi_adc_reg_access(adc->handles[0]->adc_handle, reg, writeval, readval);
 }
 
-int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
-		const struct iio_capi_ext *ext)
+/* The table filled, not registered */
+static int adc_prepare(struct iio_capi_adc *adc, const char *name,
+		struct capi_adc_chan_handle **chans, const struct iio_capi_chan_desc *descs,
+		unsigned int nb_chans, const struct iio_capi_ext *ext)
 {
 	uint32_t info = IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_RAW), avail = 0;
 	const struct capi_adc_ops *ops;
@@ -246,6 +247,8 @@ int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 			.scan = iio_capi_scan_of(h->resolution, h->is_signed, h->shift,
 					h->big_endian),
 		};
+		if (descs)
+			iio_capi_chan_describe(&adc->chans[i], &descs[i]);
 	}
 
 	adc->handles = chans;
@@ -272,5 +275,25 @@ int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 	adc->table.info_avail = 0;
 	adc->table.ext = ext;
 
+	return 0;
+}
+
+int iio_capi_adc_register_desc(struct iio_capi_adc *adc, const char *name,
+		struct capi_adc_chan_handle **chans, const struct iio_capi_chan_desc *descs,
+		unsigned int nb_chans, const struct iio_capi_ext *ext)
+{
+	int ret;
+
+	ret = adc_prepare(adc, name, chans, descs, nb_chans, ext);
+	if (ret)
+		return ret;
+
 	return iio_capi_table_register(&adc->table);
+}
+
+int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
+		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
+		const struct iio_capi_ext *ext)
+{
+	return iio_capi_adc_register_desc(adc, name, chans, NULL, nb_chans, ext);
 }

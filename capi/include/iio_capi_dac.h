@@ -5,7 +5,8 @@
 
 /*
  * A DAC behind capi_dac as an IIO device: one output voltage channel per
- * channel handle, with raw (written to the channel; read back as last
+ * channel handle (or as the application describes it,
+ * iio_capi_dac_register_desc()), with raw (written to the channel; read back as last
  * written) and an output buffer, its scans written channel by channel.
  */
 
@@ -13,6 +14,7 @@
 #define CAPI_INCLUDE_IIO_CAPI_DAC_H_
 
 #include <capi_dac.h>
+#include <iio_capi_desc.h>
 #include <iio_capi_table.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -43,6 +45,13 @@ struct iio_capi_dac {
 int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
 		const struct iio_capi_ext *ext);
+
+/* iio_capi_dac_register(), with descs saying what each output is
+ * (iio_capi_desc.h), descs[i] for chans[i]; NULL for voltage<chan_id>.
+ * Also -EINVAL for descriptions iio_capi_table_register() refuses. */
+int iio_capi_dac_register_desc(struct iio_capi_dac *dac, const char *name,
+		struct capi_dac_chan_handle **chans, const struct iio_capi_chan_desc *descs,
+		unsigned int nb_chans, uint8_t resolution, const struct iio_capi_ext *ext);
 
 #ifdef __cplusplus
 }
