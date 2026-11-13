@@ -16,7 +16,6 @@
 #include <iio_capi_table.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "iio_capi_priv.h"
 
 static unsigned int adc_chan_index(const struct iio_capi_adc *adc, const struct iio_capi_chan *chan)
 {
@@ -202,15 +201,14 @@ static int adc_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *
 	return capi_adc_reg_access(adc->handles[0]->adc_handle, reg, writeval, readval);
 }
 
-int iio_capi_adc_prepare(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, const struct iio_capi_chan_desc *descs,
-		unsigned int nb_chans, const struct iio_capi_ext *ext)
+int iio_capi_adc_init(struct iio_capi_adc *adc, struct capi_adc_chan_handle **chans,
+		const struct iio_capi_chan_desc *descs, unsigned int nb_chans)
 {
 	uint32_t info = IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_RAW), avail = 0;
 	const struct capi_adc_ops *ops;
 	unsigned int i;
 
-	if (!adc || !name || !chans || !nb_chans || nb_chans > IIO_CAPI_ADC_MAX_CHANNELS ||
+	if (!adc || !chans || !nb_chans || nb_chans > IIO_CAPI_ADC_MAX_CHANNELS ||
 			!chans[0] || !chans[0]->adc_handle || !chans[0]->adc_handle->adc_ops)
 		return -EINVAL;
 
@@ -254,7 +252,7 @@ int iio_capi_adc_prepare(struct iio_capi_adc *adc, const char *name,
 	adc->handles = chans;
 	adc->stream_nb_chans = 0;
 
-	adc->table.name = name;
+	adc->table.name = NULL;
 	adc->table.dev = adc;
 	adc->table.channels = adc->chans;
 	adc->table.nb_channels = nb_chans;
@@ -273,27 +271,26 @@ int iio_capi_adc_prepare(struct iio_capi_adc *adc, const char *name,
 	adc->table.ops = &adc->ops;
 	adc->table.info = 0;
 	adc->table.info_avail = 0;
-	adc->table.ext = ext;
+	adc->table.ext = NULL;
 
 	return 0;
 }
 
-int iio_capi_adc_register_desc(struct iio_capi_adc *adc, const char *name,
+int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
 		struct capi_adc_chan_handle **chans, const struct iio_capi_chan_desc *descs,
 		unsigned int nb_chans, const struct iio_capi_ext *ext)
 {
 	int ret;
 
-	ret = iio_capi_adc_prepare(adc, name, chans, descs, nb_chans, ext);
+	if (!name)
+		return -EINVAL;
+
+	ret = iio_capi_adc_init(adc, chans, descs, nb_chans);
 	if (ret)
 		return ret;
 
-	return iio_capi_table_register(&adc->table);
-}
+	adc->table.name = name;
+	adc->table.ext = ext;
 
-int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
-		const struct iio_capi_ext *ext)
-{
-	return iio_capi_adc_register_desc(adc, name, chans, NULL, nb_chans, ext);
+	return iio_capi_table_register(&adc->table);
 }

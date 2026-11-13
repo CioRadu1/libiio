@@ -17,7 +17,6 @@
 #include <iio_capi_table.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "iio_capi_priv.h"
 
 static unsigned int dac_chan_index(const struct iio_capi_dac *dac, const struct iio_capi_chan *chan)
 {
@@ -119,13 +118,12 @@ static int dac_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *
 	return capi_dac_reg_access(dac->handles[0]->dac_handle, reg, writeval, readval);
 }
 
-int iio_capi_dac_prepare(struct iio_capi_dac *dac, const char *name,
-		struct capi_dac_chan_handle **chans, const struct iio_capi_chan_desc *descs,
-		unsigned int nb_chans, uint8_t resolution, const struct iio_capi_ext *ext)
+int iio_capi_dac_init(struct iio_capi_dac *dac, struct capi_dac_chan_handle **chans,
+		const struct iio_capi_chan_desc *descs, unsigned int nb_chans, uint8_t resolution)
 {
 	unsigned int i;
 
-	if (!dac || !name || !chans || !nb_chans || nb_chans > IIO_CAPI_DAC_MAX_CHANNELS ||
+	if (!dac || !chans || !nb_chans || nb_chans > IIO_CAPI_DAC_MAX_CHANNELS ||
 			!resolution || resolution > 32 || !chans[0] || !chans[0]->dac_handle ||
 			!chans[0]->dac_handle->dac_ops)
 		return -EINVAL;
@@ -151,7 +149,7 @@ int iio_capi_dac_prepare(struct iio_capi_dac *dac, const char *name,
 
 	dac->handles = chans;
 
-	dac->table.name = name;
+	dac->table.name = NULL;
 	dac->table.dev = dac;
 	dac->table.channels = dac->chans;
 	dac->table.nb_channels = nb_chans;
@@ -166,27 +164,26 @@ int iio_capi_dac_prepare(struct iio_capi_dac *dac, const char *name,
 	dac->table.ops = &dac->ops;
 	dac->table.info = 0;
 	dac->table.info_avail = 0;
-	dac->table.ext = ext;
+	dac->table.ext = NULL;
 
 	return 0;
 }
 
-int iio_capi_dac_register_desc(struct iio_capi_dac *dac, const char *name,
+int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
 		struct capi_dac_chan_handle **chans, const struct iio_capi_chan_desc *descs,
 		unsigned int nb_chans, uint8_t resolution, const struct iio_capi_ext *ext)
 {
 	int ret;
 
-	ret = iio_capi_dac_prepare(dac, name, chans, descs, nb_chans, resolution, ext);
+	if (!name)
+		return -EINVAL;
+
+	ret = iio_capi_dac_init(dac, chans, descs, nb_chans, resolution);
 	if (ret)
 		return ret;
 
-	return iio_capi_table_register(&dac->table);
-}
+	dac->table.name = name;
+	dac->table.ext = ext;
 
-int iio_capi_dac_register(struct iio_capi_dac *dac, const char *name,
-		struct capi_dac_chan_handle **chans, unsigned int nb_chans, uint8_t resolution,
-		const struct iio_capi_ext *ext)
-{
-	return iio_capi_dac_register_desc(dac, name, chans, NULL, nb_chans, resolution, ext);
+	return iio_capi_table_register(&dac->table);
 }

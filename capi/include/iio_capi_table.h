@@ -153,6 +153,8 @@ struct iio_capi_scan_format {
 	bool is_big_endian;
 };
 
+struct iio_capi_attr;
+
 struct iio_capi_chan {
 	enum iio_capi_chan_type type;
 	/* Number among the channels of its type; -1 for none. With the
@@ -186,6 +188,14 @@ struct iio_capi_chan {
 	 * as no-OS's and Linux's channel address: a register, an input's
 	 * number ...; the table does not use it. */
 	uintptr_t address;
+	/* The part's own attributes of this channel only, as a Linux
+	 * channel's ext_info: for one channel among others of its type (a
+	 * digital input's threshold ...). Each is an iio_capi_attr of scope
+	 * IIO_CAPI_ATTR_CHANNEL, chan_types 0, served after the ext's on this
+	 * channel; their callbacks get the ext's priv, so a table with them
+	 * needs an ext. NULL and 0 for none. */
+	const struct iio_capi_attr *attrs;
+	unsigned int nb_attrs;
 };
 
 /*
@@ -244,9 +254,9 @@ static inline struct iio_capi_scan_format iio_capi_scan_of(uint8_t bits, bool is
 }
 
 /* Where a part's own attribute is, as in Linux: on the table's channels
- * (those of chan_types); on the device; on its buffer (buffer0, for a table
- * that has one); or a debug attribute (Linux's debugfs ones, iio_attr -D),
- * beside direct_reg_access. */
+ * (those of chan_types, or one channel: iio_capi_chan.attrs); on the
+ * device; on its buffer (buffer0, for a table that has one); or a debug
+ * attribute (Linux's debugfs ones, iio_attr -D), beside direct_reg_access. */
 enum iio_capi_attr_scope {
 	IIO_CAPI_ATTR_CHANNEL,
 	IIO_CAPI_ATTR_DEVICE,
@@ -358,7 +368,9 @@ struct iio_capi_table_device {
  * types or on another scope than a channel one, on the buffer of a table
  * without one, or whose name (or <name>_available) is one the channels or
  * the device it is on already have: a value's, another ext attribute's,
- * direct_reg_access), or -EEXIST for a device already registered. */
+ * direct_reg_access; also a channel's own attribute that is so, or of
+ * another scope than a channel one, or with chan_types, or on a table
+ * without an ext), or -EEXIST for a device already registered. */
 int iio_capi_table_register(struct iio_capi_table_device *tdev);
 
 #ifdef __cplusplus

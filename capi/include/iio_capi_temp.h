@@ -21,9 +21,9 @@
  *
  * The channels are a device of their own (iio_capi_temp_register()), whose
  * buffer has the raw code of each sensor whose driver gives it and its
- * layout (resolution ...); or one of another adapter's device, when the
- * sensor is part of that device's part (iio_capi_accel_register() takes
- * one).
+ * layout (resolution ...); or those of a part that is more classes, its
+ * temperature sensor beside its accelerometer (an ADXL355:
+ * iio_capi_temp_init(), then iio_capi_part.h).
  */
 
 #ifndef CAPI_INCLUDE_IIO_CAPI_TEMP_H_
@@ -41,7 +41,7 @@ extern "C" {
 #define IIO_CAPI_TEMP_MAX_CHANNELS 8
 #endif
 
-/* Temperature sensors served as a device. Filled by
+/* Temperature sensors served. Filled by iio_capi_temp_init() or
  * iio_capi_temp_register(); keep it and the handles for as long as the
  * context exists. */
 struct iio_capi_temp {
@@ -52,47 +52,32 @@ struct iio_capi_temp {
 };
 
 /*
- * Add temperature sensors to the context as a device, a channel each, in
- * the order of handles (what capi_temp_init() gave; the array is copied).
- * The device has a buffer when a sensor's driver gives its raw code and
- * layout; a scan is the codes of the sensors in it, read one after the
- * other, as fast as the buffer asks. ext is the part's own attributes (on
- * the channels, the device, its buffer, or debug ones), iio_capi_table.h;
- * NULL for none. With one sensor, its driver's reg_access op, if it has
- * one, is the debug attribute direct_reg_access (ext's reg_access, given,
- * is served instead; with several sensors, only ext's). Returns 0, -EINVAL for missing
- * arguments, no handle or more than IIO_CAPI_TEMP_MAX_CHANNELS, a driver
- * with neither get_temp nor get_raw, get_scale and get_offset, two sensors
- * that would have the same channel name, or what iio_capi_table_register()
- * returns.
+ * Fill temp's table for temperature sensors, a channel each, in the order
+ * of handles (what capi_temp_init() gave; the array is copied), not
+ * registered: for iio_capi_part_register(). The table has a buffer when a
+ * sensor's driver gives its raw code and layout; a scan is the codes of
+ * the sensors in it, read one after the other, as fast as the buffer
+ * asks. With one sensor, its driver's reg_access op, if it has one, is
+ * the debug attribute direct_reg_access (with several, none: whose would
+ * it be?). Returns 0, or -EINVAL for missing arguments, no handle or more
+ * than IIO_CAPI_TEMP_MAX_CHANNELS, a driver with neither get_temp nor
+ * get_raw, get_scale and get_offset, or two sensors that would have the
+ * same channel name.
+ */
+int iio_capi_temp_init(struct iio_capi_temp *temp, struct capi_temp_handle *const *handles,
+		unsigned int nb_handles);
+
+/*
+ * iio_capi_temp_init(), and the sensors added to the context as the IIO
+ * device name. ext is the part's own attributes (on the channels, the
+ * device, its buffer, or debug ones), iio_capi_table.h; NULL for none
+ * (ext's reg_access, given, is served instead of the driver's). Returns
+ * what iio_capi_temp_init() does, -EINVAL for no name, or what
+ * iio_capi_table_register() returns.
  */
 int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
 		struct capi_temp_handle *const *handles, unsigned int nb_handles,
 		const struct iio_capi_ext *ext);
-
-/*
- * For adapters with a temp channel in their table: fill chan for handle,
- * named from it, in scans at scan_index (the raw code, as the handle's
- * layout has it) or not (-1); 0, or -EINVAL for a driver with neither
- * get_temp nor get_raw, get_scale and get_offset, or for a scan_index with
- * a driver that gives no raw code or its resolution. And read one of its
- * values, as a table's read_raw does.
- */
-int iio_capi_temp_chan(struct capi_temp_handle *handle, struct iio_capi_chan *chan,
-		int scan_index);
-int iio_capi_temp_read(struct capi_temp_handle *handle, enum iio_capi_info info, int32_t *val,
-		int32_t *val2);
-
-/* Set one of its values, or list the values one takes, as a table's
- * write_raw and read_avail do: -EPERM for a value the driver does not set. */
-int iio_capi_temp_write(struct capi_temp_handle *handle, enum iio_capi_info info,
-		const struct capi_value *value);
-int iio_capi_temp_read_avail(struct capi_temp_handle *handle, enum iio_capi_info info,
-		struct capi_value *values, uint32_t *nb);
-
-/* Whether a driver gives what puts its sensor in scans: its raw code and
- * the code's layout. */
-bool iio_capi_temp_scannable(const struct capi_temp_handle *handle);
 
 #ifdef __cplusplus
 }

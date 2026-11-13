@@ -163,6 +163,31 @@ static bool ext_is_on(const struct iio_capi_attr *a, enum iio_capi_attr_scope sc
 	       (a->chan_types & IIO_CAPI_CHAN_TYPE_BIT(chan->type));
 }
 
+/* The lists of the part's own attributes that may be of scope (on chan,
+ * for a channel one): the ext's, then the channel's own. Returns how many. */
+static unsigned int ext_lists(const struct iio_capi_table_device *tdev,
+		enum iio_capi_attr_scope scope, const struct iio_capi_chan *chan,
+		const struct iio_capi_attr **lists, unsigned int *nbs)
+{
+	unsigned int n = 0;
+
+	if (!tdev->ext)
+		return 0;
+
+	if (tdev->ext->nb_attrs) {
+		lists[n] = tdev->ext->attrs;
+		nbs[n++] = tdev->ext->nb_attrs;
+	}
+
+	/* a channel's own are all of channel scope, on it */
+	if (scope == IIO_CAPI_ATTR_CHANNEL && chan && chan->nb_attrs) {
+		lists[n] = chan->attrs;
+		nbs[n++] = chan->nb_attrs;
+	}
+
+	return n;
+}
+
 /* Whether name is "<base>_available". */
 static bool is_avail_of(const char *name, const char *base)
 {
@@ -188,37 +213,41 @@ static int ext_add_one(struct iio_device *iio_device, struct iio_channel *chn,
 }
 
 /* The part's own attributes of scope, after the values, each followed by
- * its _available list when it has one: on chan, as chn, for a channel;
- * on buf for the buffer; on the device else. */
+ * its _available list when it has one: on chan, as chn, for a channel
+ * (the ext's, then the channel's own); on buf for the buffer; on the
+ * device else. */
 static int table_add_ext(const struct iio_capi_table_device *tdev, struct iio_device *iio_device,
 		enum iio_capi_attr_scope scope, const struct iio_capi_chan *chan,
 		struct iio_channel *chn, struct iio_buffer *buf)
 {
+	const struct iio_capi_attr *lists[2];
 	char name[TABLE_ATTR_LEN];
-	unsigned int i;
+	unsigned int l, n, i, nbs[2];
 	int ret;
 
-	if (!tdev->ext)
-		return 0;
+	n = ext_lists(tdev, scope, chan, lists, nbs);
 
-	for (i = 0; i < tdev->ext->nb_attrs; i++) {
-		const struct iio_capi_attr *a = &tdev->ext->attrs[i];
+	for (l = 0; l < n; l++) {
+		for (i = 0; i < nbs[l]; i++) {
+			const struct iio_capi_attr *a = &lists[l][i];
 
-		if (!ext_is_on(a, scope, chan))
-			continue;
+			if (!ext_is_on(a, scope, chan))
+				continue;
 
-		ret = ext_add_one(iio_device, chn, buf, scope, a->name);
-		if (ret)
-			return ret;
+			ret = ext_add_one(iio_device, chn, buf, scope, a->name);
+			if (ret)
+				return ret;
 
-		if (!a->read_avail)
-			continue;
+			if (!a->read_avail)
+				continue;
 
-		/* libiio copies the name; table_check_ext() made sure it fits */
-		snprintf(name, sizeof(name), "%s" TABLE_AVAIL_SUFFIX, a->name);
-		ret = ext_add_one(iio_device, chn, buf, scope, name);
-		if (ret)
-			return ret;
+			/* libiio copies the name; table_check_ext() made sure
+			 * it fits */
+			snprintf(name, sizeof(name), "%s" TABLE_AVAIL_SUFFIX, a->name);
+			ret = ext_add_one(iio_device, chn, buf, scope, name);
+			if (ret)
+				return ret;
+		}
 	}
 
 	return 0;
@@ -318,8 +347,9 @@ static const struct iio_capi_attr *table_find_ext(const struct iio_capi_table_de
 		const struct iio_attr *attr, const struct iio_capi_chan **chan, bool *avail)
 {
 	const char *name = iio_attr_get_name(attr);
+	const struct iio_capi_attr *lists[2];
 	enum iio_capi_attr_scope scope;
-	unsigned int i;
+	unsigned int l, n, i, nbs[2];
 	int idx;
 
 	if (!tdev->ext)
@@ -349,19 +379,23 @@ static const struct iio_capi_attr *table_find_ext(const struct iio_capi_table_de
 		return NULL;
 	}
 
-	for (i = 0; i < tdev->ext->nb_attrs; i++) {
-		const struct iio_capi_attr *a = &tdev->ext->attrs[i];
+	n = ext_lists(tdev, scope, *chan, lists, nbs);
 
-		if (!ext_is_on(a, scope, *chan))
-			continue;
+	for (l = 0; l < n; l++) {
+		for (i = 0; i < nbs[l]; i++) {
+			const struct iio_capi_attr *a = &lists[l][i];
 
-		*avail = false;
-		if (!strcmp(a->name, name))
-			return a;
+			if (!ext_is_on(a, scope, *chan))
+				continue;
 
-		*avail = true;
-		if (a->read_avail && is_avail_of(name, a->name))
-			return a;
+			*avail = false;
+			if (!strcmp(a->name, name))
+				return a;
+
+			*avail = true;
+			if (a->read_avail && is_avail_of(name, a->name))
+				return a;
+		}
 	}
 
 	return NULL;
@@ -1058,6 +1092,20 @@ static bool ext_name_taken(const struct iio_capi_table_device *tdev, unsigned in
 	return false;
 }
 
+/* Whether a part's own attribute is named and readable or writable as a
+ * number or as text (not both), with an _available list only for a
+ * number, which fits a name. */
+static bool attr_ok(const struct iio_capi_attr *a)
+{
+	bool number = a->read || a->write, text = a->show || a->store;
+
+	if (!a->name || !a->name[0] || number == text || (a->read_avail && !number))
+		return false;
+
+	return !a->read_avail ||
+	       strlen(a->name) + strlen(TABLE_AVAIL_SUFFIX) < TABLE_ATTR_LEN;
+}
+
 /*
  * Whether the part's own attributes can be served: each named, readable or
  * writable as a number or as text (not both), an _available list only for
@@ -1081,10 +1129,8 @@ static int table_check_ext(const struct iio_capi_table_device *tdev, bool has_bu
 
 	for (i = 0; i < ext->nb_attrs; i++) {
 		const struct iio_capi_attr *a = &ext->attrs[i];
-		bool number = a->read || a->write, text = a->show || a->store;
 
-		if (!a->name || !a->name[0] || number == text || (a->read_avail && !number) ||
-				(unsigned int)a->scope > IIO_CAPI_ATTR_DEBUG ||
+		if (!attr_ok(a) || (unsigned int)a->scope > IIO_CAPI_ATTR_DEBUG ||
 				(a->scope == IIO_CAPI_ATTR_BUFFER && !has_buffer) ||
 				(a->chan_types & ~all_types) ||
 				(a->scope != IIO_CAPI_ATTR_CHANNEL && a->chan_types))
@@ -1096,11 +1142,79 @@ static int table_check_ext(const struct iio_capi_table_device *tdev, bool has_bu
 		if (!a->read_avail)
 			continue;
 
-		if (strlen(a->name) + strlen(TABLE_AVAIL_SUFFIX) >= sizeof(avail))
-			return -EINVAL;
 		snprintf(avail, sizeof(avail), "%s" TABLE_AVAIL_SUFFIX, a->name);
 		if (ext_name_taken(tdev, i, avail))
 			return -EINVAL;
+	}
+
+	return 0;
+}
+
+/* Whether one of attrs[0..nb) on chan (all of them, or those of the ext's
+ * on it) makes name: as its own, or as its _available list. */
+static bool attrs_make(const struct iio_capi_attr *attrs, unsigned int nb, bool filter,
+		const struct iio_capi_chan *chan, const char *name)
+{
+	unsigned int i;
+
+	for (i = 0; i < nb; i++) {
+		const struct iio_capi_attr *a = &attrs[i];
+
+		if (filter && !ext_is_on(a, IIO_CAPI_ATTR_CHANNEL, chan))
+			continue;
+		if (!strcmp(a->name, name) || (a->read_avail && is_avail_of(name, a->name)))
+			return true;
+	}
+
+	return false;
+}
+
+/* Whether name, one chan->attrs[i] would make, is taken on chan: by one of
+ * its values, an ext attribute on it, or one of its own before it. */
+static bool chan_attr_name_taken(const struct iio_capi_table_device *tdev,
+		const struct iio_capi_chan *chan, unsigned int i, const char *name)
+{
+	return is_value_of(chan->info, chan->info_avail, name) ||
+	       attrs_make(tdev->ext->attrs, tdev->ext->nb_attrs, true, chan, name) ||
+	       attrs_make(chan->attrs, i, false, chan, name);
+}
+
+/*
+ * Whether each channel's own attributes can be served: as the ext's, and of
+ * channel scope without chan_types (they are on their channel), on a table
+ * with an ext (their callbacks get its priv), with no name of their own (or
+ * <name>_available) that the channel already has.
+ */
+static int table_check_chan_attrs(const struct iio_capi_table_device *tdev)
+{
+	char avail[TABLE_ATTR_LEN];
+	unsigned int c, i;
+
+	for (c = 0; c < tdev->nb_channels; c++) {
+		const struct iio_capi_chan *chan = &tdev->channels[c];
+
+		if (!chan->nb_attrs)
+			continue;
+
+		if (!chan->attrs || !tdev->ext)
+			return -EINVAL;
+
+		for (i = 0; i < chan->nb_attrs; i++) {
+			const struct iio_capi_attr *a = &chan->attrs[i];
+
+			if (!attr_ok(a) || a->scope != IIO_CAPI_ATTR_CHANNEL || a->chan_types)
+				return -EINVAL;
+
+			if (chan_attr_name_taken(tdev, chan, i, a->name))
+				return -EINVAL;
+
+			if (!a->read_avail)
+				continue;
+
+			snprintf(avail, sizeof(avail), "%s" TABLE_AVAIL_SUFFIX, a->name);
+			if (chan_attr_name_taken(tdev, chan, i, avail))
+				return -EINVAL;
+		}
 	}
 
 	return 0;
@@ -1173,6 +1287,10 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 					   (tdev->ops->read_scan || tdev->ops->read_scans));
 
 	ret = table_check_ext(tdev, has_buffer);
+	if (ret)
+		return ret;
+
+	ret = table_check_chan_attrs(tdev);
 	if (ret)
 		return ret;
 

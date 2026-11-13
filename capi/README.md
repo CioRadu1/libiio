@@ -4,9 +4,11 @@
 it serves devices behind CAPI interfaces to libiio clients (`iio_info`,
 `iio_attr`, `iio_rwdev`) over a `capi_uart`. A device driver only implements
 its CAPI interface (`capi_adc_ops`, `capi_dac_ops`, `capi_accel_ops`,
-`capi_temp_ops` ...); a class adapter here (`iio_capi_adc`, `iio_capi_dac`,
-`iio_capi_adc_dac`, `iio_capi_accel`, `iio_capi_temp`) turns it into an IIO
-device, through this port's channel table, with no per-driver code.
+`capi_temp_ops` ...); a class adapter here, one per CAPI class (`iio_capi_adc`,
+`iio_capi_dac`, `iio_capi_accel`, `iio_capi_temp`), turns it into an IIO
+device, through this port's channel table, with no per-driver code. A part
+of several classes is one device of their adapters' channels
+(`iio_capi_part`).
 
 ```
 app main.c ──► driver (capi_adc_ops) ──► capi_adc
@@ -166,8 +168,9 @@ writable from its `scale_available` list to choose the range,
 ones) and `temp` (`raw`, `scale`, `offset`: (raw + offset)
 x scale in m°C; in scans after the axes), with the scan formats
 (`be:s20/32>>4`; temp `be:u12/16>>0`, unsigned as the datasheet has
-it), the driver's temperature sensor
-(`capi_temp_ops`) given to `iio_capi_accel` with its accelerometer. Its buffer is the part's
+it): the driver's accelerometer through `iio_capi_accel` and its
+temperature sensor (`capi_temp_ops`) through `iio_capi_temp`, one device
+through `iio_capi_part`, all set up by the driver's `adxl355_iio_init()`. Its buffer is the part's
 own samples, paced by `sampling_frequency`: a driver that streams
 (`capi_accel` `stream_enable`/`read_samples`) gives a block's scans through
 the table's `read_scans`, a block at a time; see `examples/iio/README.md`
@@ -183,20 +186,19 @@ capi/
 ├── backend_table.c         # devices described by a channel table: ids, attributes, values, scans (one at a time, or a block's at once)
 ├── iio_capi_adc.c          # adapter: an ADC behind capi_adc as a table device
 ├── iio_capi_dac.c          # adapter: a DAC behind capi_dac as a table device: raw writes, an output buffer
-├── iio_capi_adc_dac.c      # adapter: a part that is an ADC and a DAC, as one device
-├── iio_capi_accel.c        # adapter: an accelerometer behind capi_accel, with its capi_temp (built when CAPI has capi_accel.h)
-├── iio_capi_temp.c         # adapter: temperature sensors behind capi_temp, a device (with a buffer) or another's channel (built when CAPI has capi_temp.h)
-├── iio_capi_priv.h         # what the adapters share
+├── iio_capi_accel.c        # adapter: an accelerometer behind capi_accel (built when CAPI has capi_accel.h)
+├── iio_capi_temp.c         # adapter: temperature sensors behind capi_temp (built when CAPI has capi_temp.h)
+├── iio_capi_part.c         # a part of several classes (accel + temp, ADC + DAC) as one device, from their adapters
 └── include/
     ├── iiod_uart.h         # iiod_uart_run()
     ├── iio_device.h        # the device API backend.c serves; iio_capi_set_context_attrs()
     ├── iio_capi_table.h    # the channel-table format, a part's own attributes (iio_capi_ext)
     ├── iio_capi_desc.h     # channel descriptions an application gives an adapter
-    ├── iio_capi_adc.h      # iio_capi_adc_register(), _register_desc()
-    ├── iio_capi_dac.h      # iio_capi_dac_register(), _register_desc()
-    ├── iio_capi_adc_dac.h  # iio_capi_adc_dac_register()
-    ├── iio_capi_accel.h    # iio_capi_accel_register()
-    ├── iio_capi_temp.h     # iio_capi_temp_register()
+    ├── iio_capi_adc.h      # iio_capi_adc_register(), _init()
+    ├── iio_capi_dac.h      # iio_capi_dac_register(), _init()
+    ├── iio_capi_accel.h    # iio_capi_accel_register(), _init()
+    ├── iio_capi_temp.h     # iio_capi_temp_register(), _init()
+    ├── iio_capi_part.h     # iio_capi_part_register()
     └── iio-config.h
 ```
 
@@ -214,10 +216,25 @@ target_link_libraries(<app> PRIVATE libiio::capi)
   implements `capi_<class>_ops` and has no IIO code. What the device has follows
   the ops it implements; its registers are the class's optional `reg_access`
   op, served as the debug attribute `direct_reg_access`.
+- **A part of several CAPI classes** (an ADXL355: `capi_accel` and
+  `capi_temp`; an AD5592R: `capi_adc` and `capi_dac`) is one IIO device:
+  each class's adapter is filled with its `_init()` call, not registered, and
+  `iio_capi_part_register()` serves their channels together, with one buffer
+  and one set of registers. The part's `<part>_iio.c`, next to its driver,
+  does this once for every application (`adxl355_iio_init()`: the part
+  brought up, its adapters, its own attributes); the application passes the
+  board's configuration. A part whose FIFO holds several classes' data (accel
+  and temp in each entry) gives `iio_capi_part_register_stream()` a stream of
+  its own (`struct iio_capi_part_stream`): the channels it carries come from
+  it, each scan from one FIFO entry, instead of one adapter streaming and the
+  others read once per chunk.
 - **With attributes of its own** (beyond its class's), the part adds a
   `<part>_iio.c` next to its driver that fills an `iio_capi_ext` (attributes on
   its channels, its device, its buffer, or debug ones, with `_available`
-  lists), passed as the adapter's last argument.
+  lists), passed as the adapter's (or `iio_capi_part_register()`'s) last argument. An attribute of one channel
+  only, among others of its type (a digital input's `threshold` ...), goes in
+  that channel's description instead (`iio_capi_chan_desc.attrs`;
+  `iio_capi_chan.attrs` in a channel table), as a Linux channel's `ext_info`.
 - **A part with no CAPI class** describes itself as a channel table
   (`iio_capi_table_device`, `iio_capi_table_register()`); the table still
   formats its values, lists, attributes, registers and scans.
