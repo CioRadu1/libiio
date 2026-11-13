@@ -1,0 +1,29 @@
+# Copyright (c) 2026 Analog Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# yaml-language-server: $schema=../../core-sw-common-hal/sdk/schemas/middleware.module.schema.v1.json
+#
+# libiio as a CAPI module, as zephyr/module.yml makes it a Zephyr one: this
+# directory, libiio's CAPI port. An application lists it under
+# depends.packages, with libiio's git address and subdir: capi, and adds
+# this directory to its build (libiio::capi).
+name: libiio
+type: middleware
+version: "1.0.0"
+description: "libiio on CAPI: serves the devices behind CAPI classes to libiio clients (iio_info, iio_attr, iio_rwdev) over a capi_uart"
+
+# The capi version this port is written against.
+capi_version_requirement: ">=0.9.0"
+
+depends:
+  interfaces:
+    # what the port itself runs on
+    - uart      # the IIOD transport (iiod/uart.c)
+    - alloc
+    - time
+    - log
+    # the classes its adapters serve, each built when capi has the class
+    - adc
+    - dac
+    - accel
+    - temp
