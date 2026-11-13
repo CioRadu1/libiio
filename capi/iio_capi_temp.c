@@ -21,7 +21,9 @@ static bool temp_is_linear(const struct capi_temp_ops *ops)
 	return ops->get_raw && ops->get_scale && ops->get_offset;
 }
 
-bool iio_capi_temp_scannable(const struct capi_temp_handle *handle)
+/* Whether a driver gives what puts its sensor in scans: its raw code and
+ * the code's layout. */
+static bool temp_scannable(const struct capi_temp_handle *handle)
 {
 	return handle && handle->ops && handle->ops->get_raw && handle->resolution &&
 	       handle->resolution + handle->shift <= 32;
@@ -40,7 +42,10 @@ static enum iio_capi_chan_modifier temp_modifier(enum capi_temp_kind kind)
 	}
 }
 
-int iio_capi_temp_chan(struct capi_temp_handle *handle, struct iio_capi_chan *chan,
+/* Fill chan for handle, named from it, in scans at scan_index (the raw
+ * code, as the handle's layout has it) or not (-1); 0, or -EINVAL for a
+ * driver with neither get_temp nor get_raw, get_scale and get_offset. */
+static int temp_chan(struct capi_temp_handle *handle, struct iio_capi_chan *chan,
 		int scan_index)
 {
 	uint32_t info;
@@ -79,7 +84,7 @@ int iio_capi_temp_chan(struct capi_temp_handle *handle, struct iio_capi_chan *ch
 		return 0;
 
 	/* In scans: the raw code, laid out as the part's registers hold it */
-	if (!iio_capi_temp_scannable(handle))
+	if (!temp_scannable(handle))
 		return -EINVAL;
 
 	chan->scan_index = scan_index;
@@ -89,7 +94,8 @@ int iio_capi_temp_chan(struct capi_temp_handle *handle, struct iio_capi_chan *ch
 	return 0;
 }
 
-int iio_capi_temp_read(struct capi_temp_handle *handle, enum iio_capi_info info, int32_t *val,
+/* One of its values, as a table's read_raw does. */
+static int temp_read(struct capi_temp_handle *handle, enum iio_capi_info info, int32_t *val,
 		int32_t *val2)
 {
 	struct capi_value v;
@@ -133,7 +139,8 @@ int iio_capi_temp_read(struct capi_temp_handle *handle, enum iio_capi_info info,
 	}
 }
 
-int iio_capi_temp_write(struct capi_temp_handle *handle, enum iio_capi_info info,
+/* Set one, as write_raw does: -EPERM for a value the driver does not set. */
+static int temp_write(struct capi_temp_handle *handle, enum iio_capi_info info,
 		const struct capi_value *value)
 {
 	const struct capi_temp_ops *ops = handle->ops;
@@ -159,7 +166,8 @@ int iio_capi_temp_write(struct capi_temp_handle *handle, enum iio_capi_info info
 /* Ratios a driver lists at most. */
 #define TEMP_MAX_RATIOS 16
 
-int iio_capi_temp_read_avail(struct capi_temp_handle *handle, enum iio_capi_info info,
+/* The values one takes, as read_avail lists them. */
+static int temp_list(struct capi_temp_handle *handle, enum iio_capi_info info,
 		struct capi_value *values, uint32_t *nb)
 {
 	uint32_t ratios[TEMP_MAX_RATIOS], n = TEMP_MAX_RATIOS, i;
@@ -196,7 +204,7 @@ static int temp_read_raw(void *dev, const struct iio_capi_chan *chan, enum iio_c
 	if (!chan)
 		return -EINVAL;
 
-	return iio_capi_temp_read(temp_handle_of(temp, chan), info, val, val2);
+	return temp_read(temp_handle_of(temp, chan), info, val, val2);
 }
 
 static int temp_write_raw(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
@@ -207,7 +215,7 @@ static int temp_write_raw(void *dev, const struct iio_capi_chan *chan, enum iio_
 	if (!chan)
 		return -EPERM;
 
-	return iio_capi_temp_write(temp_handle_of(temp, chan), info, value);
+	return temp_write(temp_handle_of(temp, chan), info, value);
 }
 
 static int temp_read_avail(void *dev, const struct iio_capi_chan *chan, enum iio_capi_info info,
@@ -218,7 +226,7 @@ static int temp_read_avail(void *dev, const struct iio_capi_chan *chan, enum iio
 	if (!chan)
 		return -EINVAL;
 
-	return iio_capi_temp_read_avail(temp_handle_of(temp, chan), info, values, nb);
+	return temp_list(temp_handle_of(temp, chan), info, values, nb);
 }
 
 /* One scan: the code of each sensor in mask, in table order. */
@@ -254,20 +262,18 @@ static int temp_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t 
 	return capi_temp_reg_access(temp->handles[0], reg, writeval, readval);
 }
 
-int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
-		struct capi_temp_handle *const *handles, unsigned int nb_handles,
-		const struct iio_capi_ext *ext)
+int iio_capi_temp_init(struct iio_capi_temp *temp, struct capi_temp_handle *const *handles,
+		unsigned int nb_handles)
 {
 	unsigned int i, j;
 	int ret, scan = 0;
 
-	if (!temp || !name || !handles || !nb_handles || nb_handles > IIO_CAPI_TEMP_MAX_CHANNELS)
+	if (!temp || !handles || !nb_handles || nb_handles > IIO_CAPI_TEMP_MAX_CHANNELS)
 		return -EINVAL;
 
 	for (i = 0; i < nb_handles; i++) {
 		/* in scans, in order, when its driver gives the raw code */
-		ret = iio_capi_temp_chan(handles[i], &temp->chans[i],
-				iio_capi_temp_scannable(handles[i]) ? scan : -1);
+		ret = temp_chan(handles[i], &temp->chans[i], temp_scannable(handles[i]) ? scan : -1);
 		if (ret)
 			return ret;
 		if (temp->chans[i].scan_index >= 0)
@@ -290,13 +296,32 @@ int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
 	if (nb_handles == 1 && handles[0]->ops && handles[0]->ops->reg_access)
 		temp->ops.reg_access = temp_reg_access;
 
-	temp->table.name = name;
+	temp->table.name = NULL;
 	temp->table.dev = temp;
 	temp->table.channels = temp->chans;
 	temp->table.nb_channels = nb_handles;
 	temp->table.ops = &temp->ops;
 	temp->table.info = 0;
 	temp->table.info_avail = 0;
+	temp->table.ext = NULL;
+
+	return 0;
+}
+
+int iio_capi_temp_register(struct iio_capi_temp *temp, const char *name,
+		struct capi_temp_handle *const *handles, unsigned int nb_handles,
+		const struct iio_capi_ext *ext)
+{
+	int ret;
+
+	if (!name)
+		return -EINVAL;
+
+	ret = iio_capi_temp_init(temp, handles, nb_handles);
+	if (ret)
+		return ret;
+
+	temp->table.name = name;
 	temp->table.ext = ext;
 
 	return iio_capi_table_register(&temp->table);

@@ -89,22 +89,19 @@ endif ()
 
 if (EXISTS "${CAPI_DIR}/inc/capi_dac.h")
     target_sources(libiio_capi PRIVATE iio_capi_dac.c)
-
-    # A part that is an ADC and a DAC (ad5592r ...), with both adapters
-    if (_capi_adc_scale)
-        target_sources(libiio_capi PRIVATE iio_capi_adc_dac.c)
-    endif ()
 endif ()
 
-# The temperature sensor adapter, for a CAPI that has capi_temp, and the
-# accelerometer one, which serves the part's temperature sensor too, for one
-# that also has capi_accel.
 if (EXISTS "${CAPI_DIR}/inc/capi_temp.h")
     target_sources(libiio_capi PRIVATE iio_capi_temp.c)
-    if (EXISTS "${CAPI_DIR}/inc/capi_accel.h")
-        target_sources(libiio_capi PRIVATE iio_capi_accel.c)
-    endif ()
 endif ()
+
+if (EXISTS "${CAPI_DIR}/inc/capi_accel.h")
+    target_sources(libiio_capi PRIVATE iio_capi_accel.c)
+endif ()
+
+# A part of several classes (an ADXL355: accel and temp; an AD5592R: ADC
+# and DAC) as one device, from its classes' adapters
+target_sources(libiio_capi PRIVATE iio_capi_part.c)
 
 add_library(libiio::capi ALIAS libiio_capi)
 

@@ -7,20 +7,17 @@
 /*
  * An accelerometer behind capi_accel as a table device: the table has its
  * axes, the values come from capi_accel_read_raw() and the other capi_accel
- * calls; and the part's temperature sensor, a capi_temp, as iio_capi_temp.c
- * serves it.
+ * calls.
  */
 
 #include <capi_accel.h>
 #include <errno.h>
 #include <iio_capi_accel.h>
 #include <iio_capi_table.h>
-#include <iio_capi_temp.h>
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ACCEL_NB_AXES 3
-#define ACCEL_TEMP    ACCEL_NB_AXES
+#define ACCEL_NB_AXES IIO_CAPI_ACCEL_NB_CHANNELS
 
 static unsigned int accel_chan_index(const struct iio_capi_accel *accel,
 		const struct iio_capi_chan *chan)
@@ -51,13 +48,9 @@ static int accel_read_raw(void *dev, const struct iio_capi_chan *chan, enum iio_
 	}
 
 	i = accel_chan_index(accel, chan);
-	if (i == ACCEL_TEMP)
-		return iio_capi_temp_read(accel->temp, info, val, val2);
 
 	switch (info) {
 	case IIO_CAPI_INFO_RAW:
-		if (i >= ACCEL_NB_AXES)
-			return -EINVAL;
 		ret = accel_read_axes(accel, axes);
 		if (ret)
 			return ret;
@@ -72,8 +65,6 @@ static int accel_read_raw(void *dev, const struct iio_capi_chan *chan, enum iio_
 		ret = capi_accel_get_odr(accel->handle, &hz);
 		return ret ? ret : iio_capi_value(&hz, val, val2);
 	case IIO_CAPI_INFO_CALIBBIAS:
-		if (i >= ACCEL_NB_AXES)
-			return -EINVAL;
 		ret = capi_accel_get_calibbias(accel->handle, (enum capi_accel_axis)i, val);
 		return ret ? ret : IIO_CAPI_VAL_INT;
 	case IIO_CAPI_INFO_HPF_3DB:
@@ -124,10 +115,6 @@ static int accel_write_raw(void *dev, const struct iio_capi_chan *chan, enum iio
 	}
 
 	i = accel_chan_index(accel, chan);
-	if (i == ACCEL_TEMP)
-		return iio_capi_temp_write(accel->temp, info, value);
-	if (i >= ACCEL_NB_AXES)
-		return -EPERM;
 
 	switch (info) {
 	case IIO_CAPI_INFO_SAMP_FREQ:
@@ -158,8 +145,7 @@ static int accel_read_avail(void *dev, const struct iio_capi_chan *chan, enum ii
 	const struct iio_capi_accel *accel = dev;
 	uint32_t room = *nb;
 
-	if (chan && accel_chan_index(accel, chan) == ACCEL_TEMP)
-		return iio_capi_temp_read_avail(accel->temp, info, values, nb);
+	(void)chan;
 
 	switch (info) {
 	case IIO_CAPI_INFO_SCALE: {
@@ -180,9 +166,6 @@ static int accel_read_avail(void *dev, const struct iio_capi_chan *chan, enum ii
 	}
 }
 
-/* temp's bit in a table mask: it follows the axes. */
-#define ACCEL_TEMP_BIT (1u << ACCEL_TEMP)
-
 static int accel_read_scan(void *dev, uint32_t mask, int32_t *values)
 {
 	const struct iio_capi_accel *accel = dev;
@@ -190,7 +173,7 @@ static int accel_read_scan(void *dev, uint32_t mask, int32_t *values)
 	unsigned int i, k = 0;
 	int ret;
 
-	/* One sample of every axis; the scan has those in mask, then temp. */
+	/* One sample of every axis; the scan has those in mask. */
 	ret = accel_read_axes(accel, axes);
 	if (ret)
 		return ret;
@@ -198,9 +181,6 @@ static int accel_read_scan(void *dev, uint32_t mask, int32_t *values)
 	for (i = 0; i < ACCEL_NB_AXES; i++)
 		if (mask & (1u << i))
 			values[k++] = axes[i];
-
-	if (mask & ACCEL_TEMP_BIT)
-		return capi_temp_get_raw(accel->temp, &values[k]);
 
 	return 0;
 }
@@ -215,52 +195,13 @@ static uint32_t accel_axes_of(uint32_t mask)
 
 /* nb_scans samples of the stream, the axes in mask of each: the table's
  * scan layout is capi_accel_read_samples()'s. */
-/* Scans read at once with temp in them: the samples' axes, then temp. */
-#define ACCEL_TEMP_CHUNK 32
-
 static int accel_read_stream(struct iio_capi_accel *accel, uint32_t mask, int32_t *values,
 		uint32_t nb_scans)
 {
-	int32_t axes[ACCEL_NB_AXES * ACCEL_TEMP_CHUNK], temp;
-	uint32_t axes_mask = accel_axes_of(mask), nb_axes, done, nb, j, a, k = 0;
-	int ret;
+	uint32_t axes_mask = accel_axes_of(mask);
 
-	if (!(mask & ACCEL_TEMP_BIT))
-		return axes_mask ? capi_accel_read_samples(accel->handle, axes_mask, values, nb_scans) :
-				   -EINVAL;
-
-	/* temp alone: the reading, as often as scans are asked for */
-	if (!axes_mask) {
-		for (j = 0; j < nb_scans; j++) {
-			ret = capi_temp_get_raw(accel->temp, &values[j]);
-			if (ret)
-				return ret;
-		}
-		return 0;
-	}
-
-	/* The part samples temp apart from the axes, which the stream has:
-	 * each chunk of samples gets the reading that follows it. */
-	nb_axes = (uint32_t)__builtin_popcount(axes_mask);
-	for (done = 0; done < nb_scans; done += nb) {
-		nb = nb_scans - done < ACCEL_TEMP_CHUNK ? nb_scans - done : ACCEL_TEMP_CHUNK;
-
-		ret = capi_accel_read_samples(accel->handle, axes_mask, axes, nb);
-		if (ret)
-			return ret;
-
-		ret = capi_temp_get_raw(accel->temp, &temp);
-		if (ret)
-			return ret;
-
-		for (j = 0; j < nb; j++) {
-			for (a = 0; a < nb_axes; a++)
-				values[k++] = axes[j * nb_axes + a];
-			values[k++] = temp;
-		}
-	}
-
-	return 0;
+	return axes_mask ? capi_accel_read_samples(accel->handle, axes_mask, values, nb_scans) :
+			   -EINVAL;
 }
 
 static int accel_read_scans(void *dev, uint32_t mask, int32_t *values, uint32_t nb_scans)
@@ -292,8 +233,7 @@ static int accel_enable_buffer(void *dev, uint32_t mask, bool enable)
 			capi_accel_stream_disable(accel->handle);
 }
 
-/* direct_reg_access: the part's registers (its temperature sensor's too,
- * the same part's) */
+/* direct_reg_access: the part's registers */
 static int accel_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t *readval)
 {
 	struct iio_capi_accel *accel = dev;
@@ -301,9 +241,7 @@ static int accel_reg_access(void *dev, uint32_t reg, uint32_t writeval, uint32_t
 	return capi_accel_reg_access(accel->handle, reg, writeval, readval);
 }
 
-int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
-		struct capi_accel_handle *handle, struct capi_temp_handle *temp,
-		const struct iio_capi_ext *ext)
+int iio_capi_accel_init(struct iio_capi_accel *accel, struct capi_accel_handle *handle)
 {
 	static const enum iio_capi_chan_modifier axes[ACCEL_NB_AXES] = {
 		IIO_CAPI_MOD_X,
@@ -311,12 +249,11 @@ int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
 		IIO_CAPI_MOD_Z,
 	};
 	const struct capi_accel_ops *ops;
-	unsigned int i, nb_chans = ACCEL_NB_AXES;
 	uint32_t info = IIO_CAPI_INFO_BIT(IIO_CAPI_INFO_RAW), avail = 0;
+	unsigned int i;
 	uint8_t bits;
-	int ret;
 
-	if (!accel || !name || !handle || !handle->ops || !handle->ops->read_raw)
+	if (!accel || !handle || !handle->ops || !handle->ops->read_raw)
 		return -EINVAL;
 
 	ops = handle->ops;
@@ -356,23 +293,12 @@ int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
 		};
 	}
 
-	/* temp follows the axes in scans, its raw code as the part's
-	 * registers hold it, when the driver gives that; not in scans else. */
-	if (temp) {
-		ret = iio_capi_temp_chan(temp, &accel->chans[nb_chans],
-				iio_capi_temp_scannable(temp) ? ACCEL_TEMP : -1);
-		if (ret)
-			return ret;
-		nb_chans++;
-	}
-
 	accel->handle = handle;
-	accel->temp = temp;
 
-	accel->table.name = name;
+	accel->table.name = NULL;
 	accel->table.dev = accel;
 	accel->table.channels = accel->chans;
-	accel->table.nb_channels = nb_chans;
+	accel->table.nb_channels = ACCEL_NB_AXES;
 
 	/* A device-wide ODR is the device's sampling_frequency, not its
 	 * accel channels' */
@@ -400,6 +326,24 @@ int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
 		accel->ops.reg_access = accel_reg_access;
 
 	accel->table.ops = &accel->ops;
+	accel->table.ext = NULL;
+
+	return 0;
+}
+
+int iio_capi_accel_register(struct iio_capi_accel *accel, const char *name,
+		struct capi_accel_handle *handle, const struct iio_capi_ext *ext)
+{
+	int ret;
+
+	if (!name)
+		return -EINVAL;
+
+	ret = iio_capi_accel_init(accel, handle);
+	if (ret)
+		return ret;
+
+	accel->table.name = name;
 	accel->table.ext = ext;
 
 	return iio_capi_table_register(&accel->table);

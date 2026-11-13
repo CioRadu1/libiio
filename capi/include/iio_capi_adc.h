@@ -7,7 +7,7 @@
 /*
  * Serves an ADC behind capi_adc (any driver's capi_adc_ops) as an IIO
  * device: one input voltage<chan_id> channel per CAPI channel, or as the
- * application describes it (iio_capi_adc_register_desc()), with raw and,
+ * part describes it (descs), with raw and,
  * given the reference voltage, scale, in a buffer of whole scans.
  */
 
@@ -64,26 +64,30 @@ struct iio_capi_adc {
  * driver's reg_access op, if it has one, is the debug attribute
  * direct_reg_access (ext's reg_access, given, is served instead).
  *
+ * descs says what each channel is (iio_capi_desc.h), descs[i] for chans[i]:
+ * its type, number, modifier, differential pair, name, label and address,
+ * where capi_adc does not say; NULL for voltage<chan_id> channels.
+ *
  * Returns 0, -EINVAL for missing arguments, no channels or more than
  * IIO_CAPI_ADC_MAX_CHANNELS, channels of different ADCs, a resolution of 0
- * or one that does not fit 32 bits with its shift, or what
- * iio_capi_table_register() returns.
+ * or one that does not fit 32 bits with its shift, descriptions
+ * iio_capi_table_register() refuses (two channels of the same id, a
+ * differential one without numbers ...), or what iio_capi_table_register()
+ * returns.
  */
 int iio_capi_adc_register(struct iio_capi_adc *adc, const char *name,
-		struct capi_adc_chan_handle **chans, unsigned int nb_chans,
-		const struct iio_capi_ext *ext);
-
-/*
- * iio_capi_adc_register(), with descs saying what each channel is
- * (iio_capi_desc.h), descs[i] for chans[i]: its type, number, modifier,
- * differential pair, name, label and address, where capi_adc does not say;
- * NULL for voltage<chan_id> channels, as iio_capi_adc_register() makes.
- * Also -EINVAL for descriptions iio_capi_table_register() refuses (two
- * channels of the same id, a differential one without numbers ...).
- */
-int iio_capi_adc_register_desc(struct iio_capi_adc *adc, const char *name,
 		struct capi_adc_chan_handle **chans, const struct iio_capi_chan_desc *descs,
 		unsigned int nb_chans, const struct iio_capi_ext *ext);
+
+/*
+ * What iio_capi_adc_register() does but the registering: adc's table
+ * filled (descs NULL for voltage<chan_id> channels), for the ADC of a part
+ * that is more classes (an AD5592R's, beside its DAC: iio_capi_part.h).
+ * Same errors, but those of iio_capi_table_register(), which
+ * iio_capi_part_register() returns.
+ */
+int iio_capi_adc_init(struct iio_capi_adc *adc, struct capi_adc_chan_handle **chans,
+		const struct iio_capi_chan_desc *descs, unsigned int nb_chans);
 
 #ifdef __cplusplus
 }

@@ -27,9 +27,11 @@ extern "C" {
 /*
  * A channel as iio_capi_chan has it (iio_capi_table.h): its type, number
  * (-1 for none), modifier, differential pair (channel the positive input,
- * channel2 the negative one), name, label and address (the part's own, for
- * its attributes' callbacks). The adapter fills the rest: direction,
- * values, scan layout.
+ * channel2 the negative one), name, label, address (the part's own, for
+ * its attributes' callbacks) and the part's own attributes of this channel
+ * only (attrs, nb_attrs: iio_capi_chan's; they get the ext's priv, so they
+ * need the adapter's ext). The adapter fills the rest: direction, values,
+ * scan layout.
  *
  * A channel's values keep the unit the driver gives them in: capi_adc's
  * scale is mV per code, IIO's unit for a voltage. A channel of another type
@@ -45,6 +47,8 @@ struct iio_capi_chan_desc {
 	const char *name;
 	const char *label;
 	uintptr_t address;
+	const struct iio_capi_attr *attrs;
+	unsigned int nb_attrs;
 };
 
 /* Put what desc says into chan. */
@@ -59,6 +63,8 @@ static inline void iio_capi_chan_describe(struct iio_capi_chan *chan,
 	chan->name = desc->name;
 	chan->label = desc->label;
 	chan->address = desc->address;
+	chan->attrs = desc->attrs;
+	chan->nb_attrs = desc->nb_attrs;
 }
 
 #ifdef __cplusplus
