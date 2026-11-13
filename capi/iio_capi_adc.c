@@ -247,6 +247,9 @@ int iio_capi_adc_init(struct iio_capi_adc *adc, struct capi_adc_chan_handle **ch
 		};
 		if (descs)
 			iio_capi_chan_describe(&adc->chans[i], &descs[i]);
+		/* What the driver says the channel is, unless descs says */
+		if (!adc->chans[i].label)
+			adc->chans[i].label = h->label;
 	}
 
 	adc->handles = chans;
