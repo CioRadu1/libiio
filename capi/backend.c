@@ -25,6 +25,10 @@
 
 static struct iio_capi_device *capi_devices;
 
+/* The contexts made of capi_devices that exist: while one does, it holds
+ * the devices, so none is unregistered. */
+static unsigned int capi_nb_contexts;
+
 /* The context's attributes (iio_capi_set_context_attrs()) */
 static const struct iio_capi_ctx_attr *capi_ctx_attrs;
 static unsigned int capi_nb_ctx_attrs;
@@ -72,6 +76,27 @@ int iio_capi_device_register(struct iio_capi_device *dev)
 	dev->next = NULL;
 	dev->reg_sel = 0;
 	*tail = dev;
+
+	return 0;
+}
+
+int iio_capi_device_unregister(struct iio_capi_device *dev)
+{
+	struct iio_capi_device **link = &capi_devices;
+
+	if (!dev)
+		return -EINVAL;
+
+	if (capi_nb_contexts)
+		return -EBUSY;
+
+	while (*link && *link != dev)
+		link = &(*link)->next;
+	if (!*link)
+		return -ENOENT;
+
+	*link = dev->next;
+	dev->next = NULL;
 
 	return 0;
 }
@@ -460,6 +485,8 @@ static struct iio_context *capi_create_context(
 	if (iio_err(ctx)) {
 		return iio_err_cast(ctx);
 	}
+	/* From here on, iio_context_destroy() runs capi_shutdown() */
+	capi_nb_contexts++;
 
 	ret = capi_add_ctx_attrs(ctx);
 	if (ret < 0)
@@ -506,8 +533,17 @@ err_destroy:
 	return iio_ptr(ret);
 }
 
+static void capi_shutdown(struct iio_context *ctx)
+{
+	(void)ctx;
+
+	if (capi_nb_contexts)
+		capi_nb_contexts--;
+}
+
 static const struct iio_backend_ops capi_ops = {
 	.create = capi_create_context,
+	.shutdown = capi_shutdown,
 	.read_attr = capi_read_attr,
 	.write_attr = capi_write_attr,
 	.get_trigger = capi_get_trigger,
