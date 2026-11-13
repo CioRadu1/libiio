@@ -180,6 +180,7 @@ in capi-hello-world for how continuous a capture is over the UART.
 
 ```
 capi/
+├── module.yml              # this directory as the CAPI package libiio (a middleware)
 ├── CMakeLists.txt          # libiio's core + this port, as libiio::capi
 ├── iiod/uart.c             # transport: capi_uart, interrupt-driven receive, one session per client
 ├── backend.c               # the "capi:" backend: context, attributes, buffers, registers
@@ -202,11 +203,22 @@ capi/
     └── iio-config.h
 ```
 
-An application adds this directory and links `libiio::capi`, the adapters
-included:
+This directory is a CAPI package, `libiio` (`module.yml`: a middleware, with
+its version and the CAPI it needs). An application lists it in its own
+`module.yml`, which gives it as `LIBIIO_DIR`:
+
+```yaml
+depends:
+  packages:
+    - libiio: {version: ">=1.0.0", git: "https://github.com/CioRadu1/libiio.git", checkout: feature/LIBIIOCHAL-6-capi-port-accel, subdir: capi}
+```
+
+The SDK takes it from `$CAPI_WORKSPACE/libiio` when it is there, and clones
+it from that address when it is not. The application then adds it and links
+`libiio::capi`, the adapters included:
 
 ```cmake
-add_subdirectory("${LIBIIO_DIR}/capi" "${CMAKE_BINARY_DIR}/libiio")
+add_subdirectory("${LIBIIO_DIR}" "${CMAKE_BINARY_DIR}/libiio")
 target_link_libraries(<app> PRIVATE libiio::capi)
 ```
 

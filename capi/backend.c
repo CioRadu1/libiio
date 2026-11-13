@@ -475,13 +475,17 @@ static struct iio_context *capi_create_context(
 	char id[32];
 	int ret;
 
-	const char *description = "CAPI " BACKEND_VERSION(LIBIIO_VERSION_GIT);
+	/* The backend is CAPI: its version and commit are the context's, as
+	 * the Zephyr backend gives the kernel's. libiio's own commit, which
+	 * a client has its own of, is in the description. */
+	const char *description = "CAPI " CAPI_BACKEND_VERSION
+				  " libiio " BACKEND_VERSION(LIBIIO_VERSION_GIT);
 
 	(void)args;
 
 	ctx = iio_context_create_from_backend(params, &iio_external_backend, description,
-			LIBIIO_VERSION_MAJOR, LIBIIO_VERSION_MINOR, LIBIIO_VERSION_PATCH,
-			LIBIIO_VERSION_GIT);
+			CAPI_BACKEND_VERSION_MAJOR, CAPI_BACKEND_VERSION_MINOR,
+			CAPI_BACKEND_VERSION_PATCH, CAPI_BACKEND_VERSION_GIT);
 	if (iio_err(ctx)) {
 		return iio_err_cast(ctx);
 	}

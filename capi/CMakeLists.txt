@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 # libiio for CAPI applications.
-# A CAPI application resolves libiio from its module.yml (as LIBIIO_DIR),
-# then adds this directory and links libiio::capi:
+# This directory is the CAPI package libiio (module.yml). A CAPI application
+# lists it in its own module.yml (libiio: {git: ..., subdir: capi}), which
+# gives it as LIBIIO_DIR, then adds it and links libiio::capi:
 #
-#   add_subdirectory(${LIBIIO_DIR}/capi ${CMAKE_BINARY_DIR}/libiio)
+#   add_subdirectory(${LIBIIO_DIR} ${CMAKE_BINARY_DIR}/libiio)
 #   target_link_libraries(<app> PRIVATE libiio::capi)
 
 option(LIBIIO_CAPI_IIOD_UART "Serve IIOD over a capi_uart" ON)
@@ -45,6 +46,33 @@ if (NOT LIBIIO_CAPI_VERSION_GIT)
     set(LIBIIO_CAPI_VERSION_GIT
         v${LIBIIO_CAPI_VERSION_MAJOR}.${LIBIIO_CAPI_VERSION_MINOR}.${LIBIIO_CAPI_VERSION_PATCH}
     )
+endif ()
+
+# CAPI's version, from its own module.yml, and its git hash: the context's
+# backend is CAPI, so they are its backend version (backend.c).
+file(
+    STRINGS "${CAPI_DIR}/module.yml" _capi_version
+    LIMIT_COUNT 1
+    REGEX "^version:[ \t]*\"?[0-9]+\\.[0-9]+\\.[0-9]+")
+string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" _capi_version
+             "${_capi_version}")
+if (NOT _capi_version)
+    message(FATAL_ERROR "capi version not found in ${CAPI_DIR}/module.yml")
+endif ()
+set(LIBIIO_CAPI_BACKEND_VERSION ${_capi_version})
+set(LIBIIO_CAPI_BACKEND_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(LIBIIO_CAPI_BACKEND_VERSION_MINOR ${CMAKE_MATCH_2})
+set(LIBIIO_CAPI_BACKEND_VERSION_PATCH ${CMAKE_MATCH_3})
+
+if (GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CAPI_DIR}
+        OUTPUT_VARIABLE LIBIIO_CAPI_BACKEND_VERSION_GIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif ()
+if (NOT LIBIIO_CAPI_BACKEND_VERSION_GIT)
+    set(LIBIIO_CAPI_BACKEND_VERSION_GIT v${LIBIIO_CAPI_BACKEND_VERSION})
 endif ()
 
 add_library(
@@ -139,6 +167,11 @@ target_compile_definitions(
             LIBIIO_VERSION_MINOR=${LIBIIO_CAPI_VERSION_MINOR}
             LIBIIO_VERSION_PATCH=${LIBIIO_CAPI_VERSION_PATCH}
             LIBIIO_VERSION_GIT=\"${LIBIIO_CAPI_VERSION_GIT}\"
+            CAPI_BACKEND_VERSION=\"${LIBIIO_CAPI_BACKEND_VERSION}\"
+            CAPI_BACKEND_VERSION_MAJOR=${LIBIIO_CAPI_BACKEND_VERSION_MAJOR}
+            CAPI_BACKEND_VERSION_MINOR=${LIBIIO_CAPI_BACKEND_VERSION_MINOR}
+            CAPI_BACKEND_VERSION_PATCH=${LIBIIO_CAPI_BACKEND_VERSION_PATCH}
+            CAPI_BACKEND_VERSION_GIT=\"${LIBIIO_CAPI_BACKEND_VERSION_GIT}\"
             HAS_STRTOK_R=1
             LIBIIO_SCAN_BACKENDS=\"\")
 
