@@ -96,6 +96,13 @@ struct iio_capi_device {
  * already registered. */
 int iio_capi_device_register(struct iio_capi_device *dev);
 
+/* Take a device out of the context to come: before the context is created
+ * or once it is gone (iiod_<transport>_run() returned), so that the part's
+ * IIO support can be undone. Devices after it are numbered one less.
+ * Returns 0, -EINVAL for no dev, -EBUSY while a context exists, or -ENOENT
+ * for a device not registered. */
+int iio_capi_device_unregister(struct iio_capi_device *dev);
+
 /* A context attribute: what the firmware says of itself (hw_model,
  * fw_version ...), as no-OS's iio_ctx_attr. iio_info lists them, sorted by
  * name as libiio sorts every attribute; iio_attr -C reads them. */

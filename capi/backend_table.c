@@ -1319,3 +1319,11 @@ int iio_capi_table_register(struct iio_capi_table_device *tdev)
 
 	return iio_capi_device_register(&tdev->iio);
 }
+
+int iio_capi_table_unregister(struct iio_capi_table_device *tdev)
+{
+	if (!tdev)
+		return -EINVAL;
+
+	return iio_capi_device_unregister(&tdev->iio);
+}

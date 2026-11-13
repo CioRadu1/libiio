@@ -373,6 +373,11 @@ struct iio_capi_table_device {
  * without an ext), or -EEXIST for a device already registered. */
 int iio_capi_table_register(struct iio_capi_table_device *tdev);
 
+/* Take the device out of the context, as iio_capi_device_unregister(): an
+ * adapter's (iio_capi_<class>_register()) or a part's
+ * (iio_capi_part_register()), by its table. Returns what that returns. */
+int iio_capi_table_unregister(struct iio_capi_table_device *tdev);
+
 #ifdef __cplusplus
 }
 #endif
