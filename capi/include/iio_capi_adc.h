@@ -66,7 +66,9 @@ struct iio_capi_adc {
  *
  * descs says what each channel is (iio_capi_desc.h), descs[i] for chans[i]:
  * its type, number, modifier, differential pair, name, label and address,
- * where capi_adc does not say; NULL for voltage<chan_id> channels.
+ * where capi_adc does not say; NULL for voltage<chan_id> channels. A
+ * channel's label, where descs gives none, is the one its driver set on
+ * its handle (capi_adc_chan_handle.label), if any.
  *
  * Returns 0, -EINVAL for missing arguments, no channels or more than
  * IIO_CAPI_ADC_MAX_CHANNELS, channels of different ADCs, a resolution of 0
