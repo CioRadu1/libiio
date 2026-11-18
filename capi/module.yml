@@ -22,8 +22,7 @@ depends:
     - alloc
     - time
     - log
-    # the classes its adapters serve, each built when capi has the class
+    # the classes its adapters serve, each built when capi has the class;
+    # accel and temp are not listed, so that a capi without them is taken
     - adc
     - dac
-    - accel
-    - temp

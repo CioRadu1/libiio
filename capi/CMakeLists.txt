@@ -97,39 +97,47 @@ add_library(
     ${LIBIIO_CAPI_ROOT}/iiod/responder.c
     ${LIBIIO_CAPI_ROOT}/iiod-responder.c
     ${LIBIIO_CAPI_ROOT}/iiod/rw.c
-    backend.c
-    backend_table.c)
+    backend.c)
 
 if (LIBIIO_CAPI_IIOD_UART)
     target_sources(libiio_capi PRIVATE iiod/uart.c)
 endif ()
 
-# The class adapters: each serves the devices behind one CAPI class to libiio
-# clients, on the channel table. They know a class, never a part, so no driver
-# needs IIO code of its own; each is built when CAPI has its class.
+# The channel table and the class adapters on it need capi_value. Without it,
+# a device is served through iio_device.h alone.
+if (EXISTS "${CAPI_DIR}/inc/capi_value.h")
+    target_sources(libiio_capi PRIVATE backend_table.c)
 
-# The ADC adapter, for a CAPI whose capi_adc has the calls it serves scale,
-# offset, sampling_frequency and captures from (capi_adc_chan_get_scale() ...).
-file(STRINGS "${CAPI_DIR}/inc/capi_adc.h" _capi_adc_scale REGEX "capi_adc_chan_get_scale")
-if (_capi_adc_scale)
-    target_sources(libiio_capi PRIVATE iio_capi_adc.c)
+    # The class adapters: each serves the devices behind one CAPI class to
+    # libiio clients, on the channel table. They know a class, never a part, so
+    # no driver needs IIO code of its own; each is built when CAPI has its
+    # class.
+
+    # The ADC adapter, for a CAPI whose capi_adc has the calls it serves
+    # scale, offset, sampling_frequency and captures from
+    # (capi_adc_chan_get_scale() ...).
+    file(STRINGS "${CAPI_DIR}/inc/capi_adc.h" _capi_adc_scale
+         REGEX "capi_adc_chan_get_scale")
+    if (_capi_adc_scale)
+        target_sources(libiio_capi PRIVATE iio_capi_adc.c)
+    endif ()
+
+    if (EXISTS "${CAPI_DIR}/inc/capi_dac.h")
+        target_sources(libiio_capi PRIVATE iio_capi_dac.c)
+    endif ()
+
+    if (EXISTS "${CAPI_DIR}/inc/capi_temp.h")
+        target_sources(libiio_capi PRIVATE iio_capi_temp.c)
+    endif ()
+
+    if (EXISTS "${CAPI_DIR}/inc/capi_accel.h")
+        target_sources(libiio_capi PRIVATE iio_capi_accel.c)
+    endif ()
+
+    # A part of several classes (an ADXL355: accel and temp; an AD5592R:
+    # ADC and DAC) as one device, from its classes' adapters
+    target_sources(libiio_capi PRIVATE iio_capi_part.c)
 endif ()
-
-if (EXISTS "${CAPI_DIR}/inc/capi_dac.h")
-    target_sources(libiio_capi PRIVATE iio_capi_dac.c)
-endif ()
-
-if (EXISTS "${CAPI_DIR}/inc/capi_temp.h")
-    target_sources(libiio_capi PRIVATE iio_capi_temp.c)
-endif ()
-
-if (EXISTS "${CAPI_DIR}/inc/capi_accel.h")
-    target_sources(libiio_capi PRIVATE iio_capi_accel.c)
-endif ()
-
-# A part of several classes (an ADXL355: accel and temp; an AD5592R: ADC
-# and DAC) as one device, from its classes' adapters
-target_sources(libiio_capi PRIVATE iio_capi_part.c)
 
 add_library(libiio::capi ALIAS libiio_capi)
 
